@@ -1,0 +1,8 @@
+# Build folders
+bin/
+obj/
+
+# Installer payloads
+Payload.zip
+*.exe
+*.msix

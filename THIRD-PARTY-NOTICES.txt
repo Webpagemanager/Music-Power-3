@@ -1,0 +1,68 @@
+THIRD-PARTY NOTICES
+====================
+
+Music Power 3 is distributed as a self-contained, single-file executable.
+Several third-party components are bundled inside that executable (rather
+than shipped as separate .dll files alongside it). This file lists those
+components, their license terms, and how to obtain their source code, in
+compliance with the notice requirements of the licenses below.
+
+--------------------------------------------------------------------------
+1. TagLib# (TagLibSharp)
+--------------------------------------------------------------------------
+Used for:      Reading and writing audio metadata (ID3 tags) and embedded
+               album artwork.
+Package:       TagLibSharp, version 2.3.0 (NuGet)
+Copyright:     Copyright (c) 2006-2007 Brian Nickel and contributors
+License:       GNU Lesser General Public License v2.1 (LGPL-2.1-only)
+Homepage:      https://github.com/mono/taglib-sharp
+License text:  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+TagLibSharp is included in this application, unmodified, as a bundled
+managed assembly. No changes have been made to its source code.
+
+Your rights under the LGPL-2.1 include the right to obtain the source
+code of this component and to modify or replace the version used by
+this application:
+
+  - Source code: https://github.com/mono/taglib-sharp
+  - NuGet package (unmodified, redistributable as a standalone .dll):
+    https://www.nuget.org/packages/TagLibSharp
+
+To relink this application against a different or modified build of
+TagLibSharp, replace the TagLibSharp package reference in the
+MusicPower3 project with your preferred version and rebuild, or extract
+the bundled assembly from the published single-file executable at
+runtime (the .NET single-file host writes bundled assemblies to a
+temporary extraction directory, or can be published without single-file
+bundling — see the project README for the `ExcludeFromSingleFile`
+option) and replace it there.
+
+--------------------------------------------------------------------------
+2. Windows Community Toolkit — LayoutTransformControl
+--------------------------------------------------------------------------
+Used for:      UI layout transformation support in WinUI 3 views.
+Package:       CommunityToolkit.WinUI.Controls.LayoutTransformControl
+Copyright:     Copyright (c) .NET Foundation and Contributors
+License:       MIT License
+Homepage:      https://github.com/CommunityToolkit/Windows
+
+--------------------------------------------------------------------------
+3. Windows App SDK
+--------------------------------------------------------------------------
+Used for:      WinUI 3 application framework, windowing, and runtime.
+Package:       Microsoft.WindowsAppSDK, version 1.6.250108002
+Copyright:     Copyright (c) Microsoft Corporation
+License:       MIT License
+Homepage:      https://github.com/microsoft/WindowsAppSDK
+
+--------------------------------------------------------------------------
+
+The MIT-licensed components above (#2, #3) are included in accordance
+with the MIT License, which requires only that the copyright notice and
+license text be preserved in copies of the software — reproduced here.
+They impose no copyleft or source-availability obligations.
+
+The license terms of each component govern that component; nothing in
+this notice modifies the terms of the MIT license under which the
+Music Power 3 source code itself is distributed (see LICENSE).
