@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Power 3 | Native Windows Music Player</title>
+    <style>
+        :root {
+            --bg-color: #111111;
+            --text-color: #f3f3f3;
+            --accent-color: #0078D4; /* WinUI Blue */
+            --accent-hover: #005a9e;
+            --card-bg: #1e1e1e;
+        }
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+        header {
+            text-align: center;
+            padding: 100px 20px;
+            background: linear-gradient(180deg, #1a1a1a 0%, var(--bg-color) 100%);
+        }
+        h1 {
+            font-size: 3.5rem;
+            margin-bottom: 10px;
+            letter-spacing: -1px;
+        }
+        .subtitle {
+            font-size: 1.2rem;
+            color: #a0a0a0;
+            max-width: 600px;
+            margin: 0 auto 40px auto;
+        }
+        .download-btn {
+            display: inline-block;
+            background-color: var(--accent-color);
+            color: white;
+            padding: 15px 35px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: background-color 0.2s;
+        }
+        .download-btn:hover {
+            background-color: var(--accent-hover);
+        }
+        .version-info {
+            display: block;
+            margin-top: 15px;
+            font-size: 0.9rem;
+            color: #888;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+        .feature-card {
+            background-color: var(--card-bg);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid #333;
+        }
+        .feature-card h3 {
+            margin-top: 0;
+            color: var(--accent-color);
+        }
+        .disclaimer {
+            background-color: #2a2510;
+            border-left: 4px solid #d4a017;
+            padding: 15px 20px;
+            margin-top: 50px;
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+            border-top: 1px solid #333;
+            margin-top: 60px;
+        }
+        a {
+            color: var(--accent-color);
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Music Power 3</h1>
+        <p class="subtitle">A lightning-fast, highly customizable native Windows desktop music player built with WinUI 3.</p>
+        
+        <!-- Replace YOUR_USERNAME below -->
+        <a href="https://github.com/Elhoussain/MusicPower3/releases/download/v2.2.0.0/SetupWizard.exe" class="download-btn">Download for Windows</a>
+        <span class="version-info">Version 2.2.0.0 • Requires Windows 10 (Build 19041) or later</span>
+    </header>
+
+    <div class="container">
+        <h2 style="text-align: center; margin-bottom: 10px;">Why Music Power 3?</h2>
+        
+        <div class="features-grid">
+            <div class="feature-card">
+                <h3>⚡ High Performance</h3>
+                <p>Optimized for lower-end systems, with RAM usage rarely reaching 100 MB. Instant search, filtering, and a lightning-fast JSON library cache.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🎛️ Deep System Integration</h3>
+                <p>Full support for Windows System Media Transport Controls. Media keys, headset buttons, and the volume flyout work out of the box.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🎵 Advanced Playback</h3>
+                <p>Standard controls, repeat modes, shuffle memory, and a unique "random date range" filter to limit playback to music from a certain period.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🏷️ Powerful Metadata Editing</h3>
+                <p>Built on TagLib#. Batch edit titles, artists, albums, years, and genres. Fetch, replace, or remove embedded album art smoothly.</p>
+            </div>
+            <div class="feature-card">
+                <h3>✨ Custom UI</h3>
+                <p>Featuring a hand-crafted scrubbable AudioProgressBar for horizontal/vertical layouts, live accent color picking, and adjustable UI scaling.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🎧 Broad Format Support</h3>
+                <p>Natively plays MP3, FLAC, WAV, M4A, AAC, OGG, and WMA files seamlessly.</p>
+            </div>
+        </div>
+
+        <div class="disclaimer">
+            <strong>AI Disclaimer:</strong> The code in this project was generated with AI assistance (models include Gemini 3.1 Pro, Claude Sonnet 5, Deepseek, and Qwen coder 3). All other elements were created entirely by a human (me haha). That includes icons (ICO, thumbnail), UI/UX design, and file structure.
+        </div>
+    </div>
+
+    <footer>
+        <p>Released under the MIT License. <a href="https://github.com/Elhoussain/MusicPower3">View Source on GitHub</a></p>
+    </footer>
+
+</body>
+</html>
