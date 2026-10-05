@@ -20,9 +20,9 @@
 
   <!-- Publisher and Metadata set strictly to Elhoussain -->
   <PropertyGroup>
-    <Version>2.2.0.0</Version>
-    <FileVersion>2.2.0.0</FileVersion>
-    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <Version>2.3.0.0</Version>
+    <FileVersion>2.3.0.0</FileVersion>
+    <AssemblyVersion>2.3.0.0</AssemblyVersion>
     <Company>Elhoussain</Company>
     <Authors>Elhoussain</Authors>
     <Product>Music Power 3</Product>

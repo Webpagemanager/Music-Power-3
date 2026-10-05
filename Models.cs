@@ -34,13 +34,29 @@ namespace MusicPower3.Models
         public DateTimeOffset RandomStartDate { get; set; } = DateTimeOffset.Now.AddMonths(-1);
         public DateTimeOffset RandomEndDate { get; set; } = DateTimeOffset.Now;
         public string LastLibraryPath { get; set; } = string.Empty;
-        public string AccentColorHex { get; set; } = "#FF0078D4";
+
+        // Empty means "no custom colour chosen yet". The Windows accent colour is used unless
+        // UseSystemAccentColor is switched off AND a valid custom colour exists.
+        public string AccentColorHex { get; set; } = string.Empty;
+        public bool UseSystemAccentColor { get; set; } = true;
+
+        // Online metadata lookup (Spotify / YouTube / SoundCloud oEmbed) can be disabled entirely.
+        public bool EnableOnlineMetadata { get; set; } = true;
     }
 
     public sealed class Track : INotifyPropertyChanged
     {
-        private static readonly Dictionary<string, BitmapImage> _imageCache = new();
+        private const int ThumbnailDecodeWidth = 96;   // list thumbnails: small decode keeps RAM low
+        private const int HighResDecodeWidth = 600;      // now-playing panel only (one image at a time)
+        private const int ThumbnailCacheLimit = 80;
+
+        private static readonly object _cacheLock = new();
+        private static readonly Dictionary<string, BitmapImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Queue<string> _imageCacheQueue = new();
+        // Paths known to have no embedded artwork, so scrolling never re-reads those files.
+        private static readonly HashSet<string> _noArtwork = new(StringComparer.OrdinalIgnoreCase);
+        // At most two artwork reads in flight at once: keeps disk and CPU usage flat while scrolling.
+        private static readonly SemaphoreSlim _artworkGate = new(2, 2);
 
         private bool _isPlaying;
         private bool _isPlayingState;
@@ -56,10 +72,14 @@ namespace MusicPower3.Models
             Duration = duration; DateAdded = dateAdded; DateModified = dateModified;
         }
 
+        private string _title = "";
+        private string _artist = "";
+        private string _album = "";
+
         public string FilePath { get; set; }
-        public string Title { get; set; }
-        public string Artist { get; set; }
-        public string Album { get; set; }
+        public string Title { get => _title; set { if (_title != value) { _title = value; OnPropertyChanged(); } } }
+        public string Artist { get => _artist; set { if (_artist != value) { _artist = value; OnPropertyChanged(); } } }
+        public string Album { get => _album; set { if (_album != value) { _album = value; OnPropertyChanged(); } } }
         public TimeSpan Duration { get; set; }
         public DateTime DateAdded { get; set; }
         
@@ -88,7 +108,7 @@ namespace MusicPower3.Models
             set 
             { 
                 _isPlaying = value; 
-                if (_isPlaying && _highResArtworkImage == null) LoadHighResImageAsync();
+                if (_isPlaying && _highResArtworkImage == null) _ = LoadHighResImageAsync();
                 else if (!_isPlaying) _highResArtworkImage = null; 
                 
                 OnPropertyChanged(); 
@@ -103,8 +123,12 @@ namespace MusicPower3.Models
         {
             get
             {
-                if (_imageCache.TryGetValue(FilePath, out var cachedImg)) return cachedImg;
-                if (!_imageLoadingStarted) { _imageLoadingStarted = true; LoadImageAsync(); }
+                lock (_cacheLock)
+                {
+                    if (_imageCache.TryGetValue(FilePath, out var cachedImg)) return cachedImg;
+                    if (_noArtwork.Contains(FilePath)) return null;
+                }
+                if (!_imageLoadingStarted) { _imageLoadingStarted = true; _ = LoadImageAsync(); }
                 return null;
             }
         }
@@ -112,74 +136,103 @@ namespace MusicPower3.Models
         [JsonIgnore]
         public BitmapImage? HighResArtworkImage => _highResArtworkImage ?? ArtworkImage;
 
-        private async void LoadImageAsync()
+        /// <summary>Reads the first embedded picture of a file. Shared by the UI loaders and the SMTC thumbnail.</summary>
+        public static async Task<byte[]?> ReadArtworkBytesAsync(string filePath)
+        {
+            await _artworkGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    using var file = TagLib.File.Create(new LocalFileAbstraction(filePath), TagLib.ReadStyle.PictureLazy);
+                    return file.Tag.Pictures.Length > 0 ? file.Tag.Pictures[0].Data.Data : null;
+                }).ConfigureAwait(false);
+            }
+            catch { return null; }
+            finally { _artworkGate.Release(); }
+        }
+
+        private static async Task<BitmapImage?> DecodeAsync(byte[] data, int decodeWidth)
         {
             try
             {
-                byte[]? data = await Task.Run(() => {
-                    using var file = TagLib.File.Create(new LocalFileAbstraction(FilePath));
-                    return file.Tag.Pictures.Length > 0 ? file.Tag.Pictures[0].Data.Data : null;
-                });
+                var bitmap = new BitmapImage { DecodePixelWidth = decodeWidth };
+                using var stream = new InMemoryRandomAccessStream();
+                await stream.WriteAsync(data.AsBuffer());
+                stream.Seek(0);
+                await bitmap.SetSourceAsync(stream);
+                return bitmap;
+            }
+            catch { return null; }
+        }
 
-                if (data != null && MainWindow.MainDispatcher != null)
+        private async Task LoadImageAsync()
+        {
+            string path = FilePath;
+            try
+            {
+                byte[]? data = await ReadArtworkBytesAsync(path).ConfigureAwait(false);
+                var dispatcher = MainWindow.MainDispatcher;
+                if (dispatcher == null) return;
+
+                if (data == null)
                 {
-                    MainWindow.MainDispatcher.TryEnqueue(async () =>
-                    {
-                        try 
-                        {
-                            var bitmap = new BitmapImage { DecodePixelWidth = 150 };
-                            using var stream = new InMemoryRandomAccessStream();
-                            await stream.WriteAsync(data.AsBuffer());
-                            stream.Seek(0);
-                            await bitmap.SetSourceAsync(stream);
-
-                            if (_imageCacheQueue.Count >= 50) _imageCache.Remove(_imageCacheQueue.Dequeue());
-                            _imageCache[FilePath] = bitmap;
-                            _imageCacheQueue.Enqueue(FilePath);
-
-                            OnPropertyChanged(nameof(ArtworkImage));
-                            OnPropertyChanged(nameof(HighResArtworkImage));
-                        } catch { }
-                    });
+                    lock (_cacheLock) { _noArtwork.Add(path); }
+                    return;
                 }
+
+                dispatcher.TryEnqueue(async () =>
+                {
+                    var bitmap = await DecodeAsync(data, ThumbnailDecodeWidth);
+                    if (bitmap == null) return;
+
+                    lock (_cacheLock)
+                    {
+                        if (!_imageCache.ContainsKey(path))
+                        {
+                            while (_imageCacheQueue.Count >= ThumbnailCacheLimit) _imageCache.Remove(_imageCacheQueue.Dequeue());
+                            _imageCacheQueue.Enqueue(path);
+                        }
+                        _imageCache[path] = bitmap;
+                    }
+
+                    OnPropertyChanged(nameof(ArtworkImage));
+                    OnPropertyChanged(nameof(HighResArtworkImage));
+                });
             }
             catch { }
             finally { _imageLoadingStarted = false; }
         }
 
-        private async void LoadHighResImageAsync()
+        private async Task LoadHighResImageAsync()
         {
             try
             {
-                byte[]? data = await Task.Run(() => {
-                    using var file = TagLib.File.Create(new LocalFileAbstraction(FilePath));
-                    return file.Tag.Pictures.Length > 0 ? file.Tag.Pictures[0].Data.Data : null;
-                });
+                byte[]? data = await ReadArtworkBytesAsync(FilePath).ConfigureAwait(false);
+                var dispatcher = MainWindow.MainDispatcher;
+                if (data == null || dispatcher == null) return;
 
-                if (data != null && MainWindow.MainDispatcher != null)
+                dispatcher.TryEnqueue(async () =>
                 {
-                    MainWindow.MainDispatcher.TryEnqueue(async () =>
-                    {
-                        try 
-                        {
-                            var bitmap = new BitmapImage { DecodePixelWidth = 800 }; 
-                            using var stream = new InMemoryRandomAccessStream();
-                            await stream.WriteAsync(data.AsBuffer());
-                            stream.Seek(0);
-                            await bitmap.SetSourceAsync(stream);
-                            
-                            _highResArtworkImage = bitmap;
-                            OnPropertyChanged(nameof(HighResArtworkImage));
-                        } catch { }
-                    });
-                }
+                    // The track may have stopped playing while the file was being read.
+                    if (!_isPlaying) return;
+                    var bitmap = await DecodeAsync(data, HighResDecodeWidth);
+                    if (bitmap == null || !_isPlaying) return;
+
+                    _highResArtworkImage = bitmap;
+                    OnPropertyChanged(nameof(HighResArtworkImage));
+                });
             }
             catch { }
         }
 
         public static void ClearArtworkCache(string filePath)
         {
-            _imageCache.Remove(filePath);
+            lock (_cacheLock)
+            {
+                _imageCache.Remove(filePath);
+                _noArtwork.Remove(filePath);
+            }
         }
 
         public void TriggerArtworkRefresh()
@@ -188,6 +241,7 @@ namespace MusicPower3.Models
             _highResArtworkImage = null;
             OnPropertyChanged(nameof(ArtworkImage));
             OnPropertyChanged(nameof(HighResArtworkImage));
+            if (_isPlaying) _ = LoadHighResImageAsync();
         }
         
         public event PropertyChangedEventHandler? PropertyChanged;
