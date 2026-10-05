@@ -2,20 +2,24 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Windows.Media;
 using Windows.Media.Core;
 using Windows.Media.Playback;
+using Windows.Storage.Streams;
 using MusicPower3.Models;
 
 namespace MusicPower3.Services
 {
     public class AudioEngine : IDisposable
     {
-        private MediaPlayer? _mediaPlayer;
-        private SystemMediaTransportControls? _smtc;
-        private bool _isReady = false;
+        private readonly MediaPlayer _mediaPlayer;
+        private readonly SystemMediaTransportControls _smtc;
+        private MediaSource? _currentSource;
+        private MediaPlaybackItem? _currentItem;
+        private InMemoryRandomAccessStream? _thumbStream;
 
         public event EventHandler? EndReached;
         public event EventHandler? PlayRequested;
@@ -23,71 +27,144 @@ namespace MusicPower3.Services
         public event EventHandler? NextRequested;
         public event EventHandler? PreviousRequested;
 
-        public long Time => (long)(_mediaPlayer?.PlaybackSession.Position.TotalMilliseconds ?? 0);
-        public long Length => (long)(_mediaPlayer?.PlaybackSession.NaturalDuration.TotalMilliseconds ?? 0);
+        public long Time => (long)_mediaPlayer.PlaybackSession.Position.TotalMilliseconds;
+        public long Length => (long)_mediaPlayer.PlaybackSession.NaturalDuration.TotalMilliseconds;
 
         public AudioEngine()
         {
-            Task.Run(() => 
-            {
-                try 
-                {
-                    _mediaPlayer = new MediaPlayer();
-                    _mediaPlayer.AudioCategory = MediaPlayerAudioCategory.Media;
-                    _mediaPlayer.MediaEnded += (s, e) => EndReached?.Invoke(this, EventArgs.Empty);
-                    
-                    _smtc = _mediaPlayer.SystemMediaTransportControls;
-                    _smtc.IsEnabled = true;
-                    _smtc.IsPlayEnabled = true;
-                    _smtc.IsPauseEnabled = true;
-                    _smtc.IsNextEnabled = true;
-                    _smtc.IsPreviousEnabled = true;
+            // Created synchronously: MediaPlayer is a lightweight wrapper, and initialising it on the
+            // calling thread removes the old race where Play() could arrive before the engine was ready.
+            _mediaPlayer = new MediaPlayer { AudioCategory = MediaPlayerAudioCategory.Media };
+            _mediaPlayer.MediaEnded += (s, e) => EndReached?.Invoke(this, EventArgs.Empty);
 
-                    _mediaPlayer.CommandManager.IsEnabled = true;
-                    _mediaPlayer.CommandManager.PlayBehavior.EnablingRule = MediaCommandEnablingRule.Always;
-                    _mediaPlayer.CommandManager.PauseBehavior.EnablingRule = MediaCommandEnablingRule.Always;
-                    _mediaPlayer.CommandManager.NextBehavior.EnablingRule = MediaCommandEnablingRule.Always;
-                    _mediaPlayer.CommandManager.PreviousBehavior.EnablingRule = MediaCommandEnablingRule.Always;
+            _smtc = _mediaPlayer.SystemMediaTransportControls;
+            _smtc.IsEnabled = true;
+            _smtc.IsPlayEnabled = true;
+            _smtc.IsPauseEnabled = true;
+            _smtc.IsNextEnabled = true;
+            _smtc.IsPreviousEnabled = true;
 
-                    _mediaPlayer.CommandManager.PlayReceived += (cm, e) => { e.Handled = true; PlayRequested?.Invoke(this, EventArgs.Empty); };
-                    _mediaPlayer.CommandManager.PauseReceived += (cm, e) => { e.Handled = true; PauseRequested?.Invoke(this, EventArgs.Empty); };
-                    _mediaPlayer.CommandManager.NextReceived += (cm, e) => { e.Handled = true; NextRequested?.Invoke(this, EventArgs.Empty); };
-                    _mediaPlayer.CommandManager.PreviousReceived += (cm, e) => { e.Handled = true; PreviousRequested?.Invoke(this, EventArgs.Empty); };
+            var cm = _mediaPlayer.CommandManager;
+            cm.IsEnabled = true;
+            cm.PlayBehavior.EnablingRule = MediaCommandEnablingRule.Always;
+            cm.PauseBehavior.EnablingRule = MediaCommandEnablingRule.Always;
+            cm.NextBehavior.EnablingRule = MediaCommandEnablingRule.Always;
+            cm.PreviousBehavior.EnablingRule = MediaCommandEnablingRule.Always;
 
-                    _isReady = true;
-                }
-                catch (Exception ex) { Debug.WriteLine($"Audio Init Failed: {ex.Message}"); }
-            });
+            cm.PlayReceived += (c, e) => { e.Handled = true; PlayRequested?.Invoke(this, EventArgs.Empty); };
+            cm.PauseReceived += (c, e) => { e.Handled = true; PauseRequested?.Invoke(this, EventArgs.Empty); };
+            cm.NextReceived += (c, e) => { e.Handled = true; NextRequested?.Invoke(this, EventArgs.Empty); };
+            cm.PreviousReceived += (c, e) => { e.Handled = true; PreviousRequested?.Invoke(this, EventArgs.Empty); };
         }
 
         public void Play(Track track)
         {
-            if (!_isReady || track == null || _mediaPlayer == null || _smtc == null) return;
-            _mediaPlayer.Pause();
+            if (track == null) return;
             try
             {
-                _mediaPlayer.Source = MediaSource.CreateFromUri(new Uri(track.FilePath, UriKind.Absolute));
-                var updater = _smtc.DisplayUpdater;
-                updater.Type = MediaPlaybackType.Music;
-                updater.MusicProperties.Title = track.Title;
-                updater.MusicProperties.Artist = track.Artist;
-                updater.Update();
+                var source = MediaSource.CreateFromUri(new Uri(track.FilePath, UriKind.Absolute));
+                var item = new MediaPlaybackItem(source);
+
+                // With the CommandManager enabled, Windows reads the title/artist/artwork shown in the
+                // volume flyout, lock screen and media keys from the playback item's display properties.
+                var props = item.GetDisplayProperties();
+                props.Type = MediaPlaybackType.Music;
+                props.MusicProperties.Title = track.Title;
+                props.MusicProperties.Artist = track.Artist;
+                props.MusicProperties.AlbumTitle = track.Album;
+                item.ApplyDisplayProperties(props);
+
+                try
+                {
+                    _smtc.DisplayUpdater.Type = MediaPlaybackType.Music;
+                    _smtc.DisplayUpdater.MusicProperties.Title = track.Title;
+                    _smtc.DisplayUpdater.MusicProperties.Artist = track.Artist;
+                    _smtc.DisplayUpdater.MusicProperties.AlbumTitle = track.Album;
+                    _smtc.DisplayUpdater.Update();
+                }
+                catch { }
+
+                var previousSource = _currentSource;
+                _currentSource = source;
+                _currentItem = item;
+
+                _mediaPlayer.Source = item;
                 _mediaPlayer.Play();
+
+                previousSource?.Dispose();
+                _ = ApplyThumbnailAsync(item, track.FilePath);
             }
             catch (Exception ex) { Debug.WriteLine($"Play Failed: {ex.Message}"); }
         }
 
-        public void Pause() => _mediaPlayer?.Pause();
-        public void Resume() => _mediaPlayer?.Play();
-        public void Stop() => _mediaPlayer?.Pause();
-        public void SetVolume(int volume) { if (_mediaPlayer != null) _mediaPlayer.Volume = Math.Clamp(volume / 100.0, 0.0, 1.0); }
-        public void SeekTo(float position) { if (_mediaPlayer != null && _mediaPlayer.PlaybackSession.CanSeek) _mediaPlayer.PlaybackSession.Position = TimeSpan.FromMilliseconds(Length * position); }
-        public void Dispose() => _mediaPlayer?.Dispose();
+        private async Task ApplyThumbnailAsync(MediaPlaybackItem item, string filePath)
+        {
+            try
+            {
+                byte[]? data = await Track.ReadArtworkBytesAsync(filePath);
+                if (data == null || !ReferenceEquals(item, _currentItem)) return;
+
+                var stream = new InMemoryRandomAccessStream();
+                await stream.WriteAsync(data.AsBuffer());
+                stream.Seek(0);
+
+                if (!ReferenceEquals(item, _currentItem)) { stream.Dispose(); return; }
+
+                var thumbRef = RandomAccessStreamReference.CreateFromStream(stream);
+                var props = item.GetDisplayProperties();
+                props.Thumbnail = thumbRef;
+                item.ApplyDisplayProperties(props);
+
+                try
+                {
+                    _smtc.DisplayUpdater.Thumbnail = thumbRef;
+                    _smtc.DisplayUpdater.Update();
+                }
+                catch { }
+
+                var old = System.Threading.Interlocked.Exchange(ref _thumbStream, stream);
+                old?.Dispose();
+            }
+            catch (Exception ex) { Debug.WriteLine($"Thumbnail Failed: {ex.Message}"); }
+        }
+
+        public void Pause() => _mediaPlayer.Pause();
+        public void Resume() => _mediaPlayer.Play();
+        public void Stop() => _mediaPlayer.Pause();
+        public void SetVolume(int volume) => _mediaPlayer.Volume = Math.Clamp(volume / 100.0, 0.0, 1.0);
+
+        public void SeekTo(float position)
+        {
+            if (_mediaPlayer.PlaybackSession.CanSeek)
+                _mediaPlayer.PlaybackSession.Position = TimeSpan.FromMilliseconds(Length * position);
+        }
+
+        public void Dispose()
+        {
+            _mediaPlayer.Source = null;
+            _mediaPlayer.Dispose();
+            _currentSource?.Dispose();
+            _thumbStream?.Dispose();
+        }
+    }
+
+    internal static class AtomicFile
+    {
+        // Write to a sibling temp file and swap it in, so a crash or power loss mid-write can never
+        // leave a half-written settings/cache file behind.
+        public static void WriteAllText(string path, string content)
+        {
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, content);
+            File.Move(tmp, path, true);
+        }
     }
 
     public static class SettingsStore
     {
         private static readonly string SettingsPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MusicPower3", "settings.json");
+        private static readonly object _lock = new();
+        private static readonly JsonSerializerOptions _options = new() { WriteIndented = true };
 
         public static MusicPower3.Models.AppSettings Load()
         {
@@ -107,9 +184,11 @@ namespace MusicPower3.Services
         {
             try
             {
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
-                string json = System.Text.Json.JsonSerializer.Serialize(settings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-                System.IO.File.WriteAllText(SettingsPath, json);
+                lock (_lock)
+                {
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
+                    AtomicFile.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, _options));
+                }
             }
             catch { }
         }
@@ -118,6 +197,7 @@ namespace MusicPower3.Services
     public static class LibraryCache
     {
         private static readonly string CachePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MusicPower3", "library_cache.json");
+        private static readonly object _lock = new();
 
         public static System.Collections.Generic.List<MusicPower3.Models.Track> Load()
         {
@@ -137,9 +217,11 @@ namespace MusicPower3.Services
         {
             try
             {
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CachePath)!);
-                string json = System.Text.Json.JsonSerializer.Serialize(tracks);
-                System.IO.File.WriteAllText(CachePath, json);
+                lock (_lock)
+                {
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CachePath)!);
+                    AtomicFile.WriteAllText(CachePath, JsonSerializer.Serialize(tracks));
+                }
             }
             catch { }
         }
@@ -147,17 +229,21 @@ namespace MusicPower3.Services
 
     public static class TrackMetadataReader
     {
-        public static Track Read(string filePath)
+        public static Track Read(string filePath) => Read(new FileInfo(filePath));
+
+        // Takes a FileInfo so directory enumeration can hand over the timestamps it already fetched,
+        // which avoids extra file-system calls for every file during a library scan.
+        public static Track Read(FileInfo info)
         {
+            string filePath = info.FullName;
             string title = System.IO.Path.GetFileNameWithoutExtension(filePath);
             string artist = "Unknown Artist"; string album = "Unknown Album";
             TimeSpan duration = TimeSpan.Zero;
-            DateTime dateAdded = File.GetCreationTime(filePath);
-            DateTime dateModified = File.GetLastWriteTime(filePath);
 
             try
             {
-                using var file = TagLib.File.Create(new LocalFileAbstraction(filePath));
+                // PictureLazy: embedded artwork is not pulled into memory just to read the text tags.
+                using var file = TagLib.File.Create(new LocalFileAbstraction(filePath), TagLib.ReadStyle.Average | TagLib.ReadStyle.PictureLazy);
                 if (!string.IsNullOrWhiteSpace(file.Tag.Title)) title = file.Tag.Title;
                 if (file.Tag.Performers.Length > 0) artist = string.Join(", ", file.Tag.Performers);
                 if (!string.IsNullOrWhiteSpace(file.Tag.Album)) album = file.Tag.Album;
@@ -165,9 +251,10 @@ namespace MusicPower3.Services
             }
             catch { }
 
-            return new Track(filePath, title, artist, album, duration, dateAdded, dateModified);
+            return new Track(filePath, title, artist, album, duration, info.CreationTime, info.LastWriteTime);
         }
     }
+
     public class TrackMetadataUpdate
     {
         // Nullable fields allow us to skip writing them during a Batch Edit
@@ -197,9 +284,10 @@ namespace MusicPower3.Services
 
         public static void SaveMetadata(string filePath, TrackMetadataUpdate data, bool isBatch)
         {
-            // We use the existing LocalFileAbstraction[cite: 12] which opens with FileShare.ReadWrite.
-            // If the file is strictly locked by playback, TagLib# will throw an IOException here.
-            // If the file headers are corrupted, it throws CorruptFileException.
+            // Tags are written in place (TagLib# only rewrites the tag region and uses padding), which keeps
+            // disk writes small and works while the file is open for playback. Copying the whole audio file
+            // for an "atomic" swap would rewrite tens of megabytes per edit and fail on an in-use file.
+            // If the file is strictly locked, TagLib# throws IOException; corrupted headers throw CorruptFileException.
             using var file = TagLib.File.Create(new MusicPower3.Models.LocalFileAbstraction(filePath));
 
             // Single track mode overwrites everything (even with empty strings).

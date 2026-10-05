@@ -187,6 +187,41 @@ namespace MusicPower3Setup
             }
         }
 
+        [System.Runtime.InteropServices.DllImport("shell32.dll")]
+        private static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+        private const int SHCNE_ASSOCCHANGED = 0x08000000;
+        private const uint SHCNF_IDLIST = 0x0000;
+
+        private static readonly string[] AudioExtensions = new[] { ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".wma" };
+
+        private static bool IsSafeDirectoryToDelete(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) return false;
+            foreach (char c in "%^&|<>\r\n\"")
+            {
+                if (dir.IndexOf(c) >= 0) return false;
+            }
+            try
+            {
+                string full = Path.GetFullPath(dir).TrimEnd('\\', '/');
+                string root = Path.GetPathRoot(full);
+                if (!string.IsNullOrEmpty(root) && string.Equals(full, root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) return false;
+
+                string win = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\', '/');
+                if (string.Equals(full, win, StringComparison.OrdinalIgnoreCase)) return false;
+                string sys = Environment.GetFolderPath(Environment.SpecialFolder.System).TrimEnd('\\', '/');
+                if (string.Equals(full, sys, StringComparison.OrdinalIgnoreCase)) return false;
+                string user = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd('\\', '/');
+                if (string.Equals(full, user, StringComparison.OrdinalIgnoreCase)) return false;
+                string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory).TrimEnd('\\', '/');
+                if (string.Equals(full, desk, StringComparison.OrdinalIgnoreCase)) return false;
+
+                if (!File.Exists(Path.Combine(full, "MusicPower3.exe"))) return false;
+                return true;
+            }
+            catch { return false; }
+        }
+
         private async Task PerformInstallAsync(bool isUpdate)
         {
             try
@@ -194,8 +229,13 @@ namespace MusicPower3Setup
                 _lblStatus.Text = "Extracting files...";
                 _progressBar.Value = 25;
 
+                var extractedFiles = new System.Collections.Generic.List<string>();
                 await Task.Run(() =>
                 {
+                    string targetRoot = Path.GetFullPath(_installDir);
+                    if (!targetRoot.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                        targetRoot += Path.DirectorySeparatorChar;
+
                     if (!Directory.Exists(_installDir)) Directory.CreateDirectory(_installDir);
 
                     using (Stream resStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip"))
@@ -208,14 +248,24 @@ namespace MusicPower3Setup
                             {
                                 if (string.IsNullOrEmpty(entry.Name)) continue;
                                 string destinationPath = Path.GetFullPath(Path.Combine(_installDir, entry.FullName));
+                                if (!destinationPath.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    throw new InvalidOperationException($"Zip entry attempted directory traversal: {entry.FullName}");
+                                }
 
                                 string destinationDir = Path.GetDirectoryName(destinationPath);
                                 if (!Directory.Exists(destinationDir)) Directory.CreateDirectory(destinationDir);
 
                                 entry.ExtractToFile(destinationPath, overwrite: true);
+                                extractedFiles.Add(entry.FullName);
                             }
                         }
                     }
+
+                    extractedFiles.Add("MusicPower3.exe");
+                    extractedFiles.Add("Uninstall.exe");
+                    extractedFiles.Add("install.manifest");
+                    File.WriteAllLines(Path.Combine(_installDir, "install.manifest"), extractedFiles);
                 });
 
                 _progressBar.Value = 65;
@@ -240,6 +290,7 @@ namespace MusicPower3Setup
                         CreateShortcut(uninstallerDest, Path.Combine(startDir, "Uninstall Music Power 3.lnk"), "Uninstall Music Power 3");
                     }
                     RegisterUninstallerInRegistry(_installDir, uninstallerDest, mainExe);
+                    RegisterFileAssociations(mainExe, _installDir);
                 });
 
                 _progressBar.Value = 100;
@@ -265,25 +316,177 @@ namespace MusicPower3Setup
         {
             try
             {
-                _lblStatus.Text = "Removing shortcuts...";
+                if (!IsSafeDirectoryToDelete(_installDir))
+                {
+                    throw new InvalidOperationException("The directory cannot be safely uninstalled or does not appear to contain a valid Music Power 3 installation.");
+                }
+
+                _lblStatus.Text = "Removing shortcuts and file associations...";
                 _progressBar.Value = 30;
 
                 await Task.Run(() =>
                 {
                     string deskDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                     string startDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Music Power 3");
-                    File.Delete(Path.Combine(deskDir, "Music Power 3.lnk"));
-                    if (Directory.Exists(startDir)) Directory.Delete(startDir, true);
-                    if (OperatingSystem.IsWindows()) Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\Music Power 3", false);
+                    try { File.Delete(Path.Combine(deskDir, "Music Power 3.lnk")); } catch { }
+                    if (Directory.Exists(startDir)) { try { Directory.Delete(startDir, true); } catch { } }
+
+                    if (OperatingSystem.IsWindows())
+                    {
+                        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\Music Power 3", false);
+                        UnregisterFileAssociations();
+                    }
+
+                    string manifestPath = Path.Combine(_installDir, "install.manifest");
+                    if (File.Exists(manifestPath))
+                    {
+                        try
+                        {
+                            var lines = File.ReadAllLines(manifestPath);
+                            foreach (var line in lines)
+                            {
+                                string trimmed = line.Trim();
+                                if (string.IsNullOrEmpty(trimmed) || trimmed.Equals("Uninstall.exe", StringComparison.OrdinalIgnoreCase)) continue;
+                                string target = Path.Combine(_installDir, trimmed);
+                                if (File.Exists(target))
+                                {
+                                    try { File.Delete(target); } catch { }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
                 });
 
                 _progressBar.Value = 100;
-                MessageBox.Show("Uninstallation complete. The folder will now be permanently removed from your system.", "Uninstalled", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Uninstallation complete. The folder will now be cleaned up.", "Uninstalled", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-                ProcessStartInfo cmd = new ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{_installDir}\"") { CreateNoWindow = true, UseShellExecute = false };
+                string safeDir = Path.GetFullPath(_installDir).TrimEnd('\\', '/');
+                ProcessStartInfo cmd = new ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{safeDir}\"") { CreateNoWindow = true, UseShellExecute = false };
                 Process.Start(cmd); Application.Exit();
             }
             catch (Exception ex) { MessageBox.Show($"Error during uninstallation: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        private static void RegisterFileAssociations(string mainExe, string installDir)
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            try
+            {
+                string progId = "MusicPower3.AudioFile";
+                using (var progKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{progId}"))
+                {
+                    if (progKey != null)
+                    {
+                        progKey.SetValue("", "Audio File");
+                        progKey.SetValue("AppUserModelID", "Music Power 3");
+                        using var iconKey = progKey.CreateSubKey("DefaultIcon");
+                        iconKey?.SetValue("", $"\"{mainExe}\",0");
+                        using var cmdKey = progKey.CreateSubKey(@"shell\open\command");
+                        cmdKey?.SetValue("", $"\"{mainExe}\" \"%1\"");
+                    }
+                }
+
+                foreach (var ext in AudioExtensions)
+                {
+                    using var openWith = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ext}\OpenWithProgids");
+                    openWith?.SetValue(progId, string.Empty);
+                }
+
+                using (var cap = Registry.CurrentUser.CreateSubKey(@"Software\MusicPower3\Capabilities"))
+                {
+                    if (cap != null)
+                    {
+                        cap.SetValue("ApplicationDescription", "Music Power 3 Audio Player");
+                        cap.SetValue("ApplicationName", "Music Power 3");
+                        using var fileAssoc = cap.CreateSubKey("FileAssociations");
+                        if (fileAssoc != null)
+                        {
+                            foreach (var ext in AudioExtensions)
+                            {
+                                fileAssoc.SetValue(ext, progId);
+                            }
+                        }
+                    }
+                }
+
+                using (var regApp = Registry.CurrentUser.CreateSubKey(@"Software\RegisteredApplications"))
+                {
+                    regApp?.SetValue("MusicPower3", @"Software\MusicPower3\Capabilities");
+                }
+
+                string iconPath = Path.Combine(installDir, "Assets", "icon.ico");
+                if (!File.Exists(iconPath)) iconPath = mainExe;
+
+                // Applications\MusicPower3.exe for Windows 11 "Open with" context menu
+                using (var appKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\MusicPower3.exe"))
+                {
+                    if (appKey != null)
+                    {
+                        appKey.SetValue("FriendlyAppName", "Music Power 3");
+                        appKey.SetValue("ApplicationCompany", "Elhoussain");
+                        using (var defIcon = appKey.CreateSubKey("DefaultIcon"))
+                        {
+                            defIcon?.SetValue("", $"\"{iconPath}\",0");
+                        }
+                        using (var cmd = appKey.CreateSubKey(@"shell\open\command"))
+                        {
+                            cmd?.SetValue("", $"\"{mainExe}\" \"%1\"");
+                        }
+                        using (var supported = appKey.CreateSubKey("SupportedTypes"))
+                        {
+                            if (supported != null)
+                            {
+                                foreach (var ext in AudioExtensions)
+                                {
+                                    supported.SetValue(ext, string.Empty);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                using (var aumidKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\Music Power 3"))
+                {
+                    if (aumidKey != null)
+                    {
+                        aumidKey.SetValue("DisplayName", "Music Power 3");
+                        aumidKey.SetValue("IconUri", iconPath);
+                    }
+                }
+
+                SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        private static void UnregisterFileAssociations()
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            try
+            {
+                string progId = "MusicPower3.AudioFile";
+                Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{progId}", false);
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Applications\MusicPower3.exe", false);
+
+                foreach (var ext in AudioExtensions)
+                {
+                    using var openWith = Registry.CurrentUser.OpenSubKey($@"Software\Classes\{ext}\OpenWithProgids", true);
+                    openWith?.DeleteValue(progId, false);
+                }
+
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\MusicPower3", false);
+
+                using (var regApp = Registry.CurrentUser.OpenSubKey(@"Software\RegisteredApplications", true))
+                {
+                    regApp?.DeleteValue("MusicPower3", false);
+                }
+
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\Music Power 3", false);
+
+                SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
         }
 
         private void CreateShortcut(string targetExe, string shortcutPath, string desc)
@@ -293,19 +496,103 @@ namespace MusicPower3Setup
                 string dir = Path.GetDirectoryName(shortcutPath);
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
-                // FIX 3: Fully bypassed PowerShell. This uses native Windows COM libraries to build the shortcut.
-                // It is instantaneous, cannot fail due to Quotes/Spaces, and ignores local script execution restrictions.
-                Type t = Type.GetTypeFromProgID("WScript.Shell");
-                dynamic shell = Activator.CreateInstance(t);
-                dynamic shortcut = shell.CreateShortcut(shortcutPath);
-                shortcut.TargetPath = targetExe;
-                shortcut.WorkingDirectory = Path.GetDirectoryName(targetExe);
-                shortcut.Description = desc;
-                shortcut.Save();
+                var link = (IShellLinkW)new ShellLinkClass();
+                link.SetPath(targetExe);
+                link.SetWorkingDirectory(Path.GetDirectoryName(targetExe));
+                link.SetDescription(desc);
+
+                string iconPath = Path.Combine(Path.GetDirectoryName(targetExe) ?? string.Empty, "Assets", "icon.ico");
+                if (File.Exists(iconPath)) link.SetIconLocation(iconPath, 0);
+
+                var store = (IPropertyStore)link;
+                var pkey = new PropertyKey(new Guid("9F4C2855-9F79-48D7-9E68-7D960F80227C"), 5);
+                using (var pv = PropVariant.FromString("Music Power 3"))
+                {
+                    store.SetValue(ref pkey, pv);
+                    store.Commit();
+                }
+
+                var persist = (System.Runtime.InteropServices.ComTypes.IPersistFile)link;
+                persist.Save(shortcutPath, true);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Shortcut Error: {ex.Message}");
+            }
+        }
+
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("00021401-0000-0000-C000-000000000046")]
+        private class ShellLinkClass { }
+
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown), System.Runtime.InteropServices.Guid("000214F9-0000-0000-C000-000000000046")]
+        private interface IShellLinkW
+        {
+            void GetPath([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] System.Text.StringBuilder pszFile, int cchMaxPath, IntPtr pfd, int fFlags);
+            void GetIDList(out IntPtr ppidl);
+            void SetIDList(IntPtr pidl);
+            void GetDescription([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] System.Text.StringBuilder pszName, int cchMaxName);
+            void SetDescription([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszName);
+            void GetWorkingDirectory([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] System.Text.StringBuilder pszDir, int cchMaxPath);
+            void SetWorkingDirectory([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszDir);
+            void GetArguments([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] System.Text.StringBuilder pszArgs, int cchMaxPath);
+            void SetArguments([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszArgs);
+            void GetHotkey(out short pwHotkey);
+            void SetHotkey(short wHotkey);
+            void GetShowCmd(out int piShowCmd);
+            void SetShowCmd(int iShowCmd);
+            void GetIconLocation([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] System.Text.StringBuilder pszIconPath, int cchIconPath, out int piIcon);
+            void SetIconLocation([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+            void SetRelativePath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
+            void Resolve(IntPtr hwnd, int fFlags);
+            void SetPath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszFile);
+        }
+
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown), System.Runtime.InteropServices.Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+        public interface IPropertyStore
+        {
+            int GetCount(out uint cProps);
+            int GetAt(uint iProp, out PropertyKey pkey);
+            int GetValue(ref PropertyKey key, [System.Runtime.InteropServices.In, System.Runtime.InteropServices.Out] PropVariant pv);
+            int SetValue(ref PropertyKey key, [System.Runtime.InteropServices.In] PropVariant pv);
+            int Commit();
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 4)]
+        public struct PropertyKey
+        {
+            public Guid fmtid;
+            public uint pid;
+
+            public PropertyKey(Guid guid, uint id)
+            {
+                fmtid = guid;
+                pid = id;
+            }
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+        public class PropVariant : IDisposable
+        {
+            [System.Runtime.InteropServices.FieldOffset(0)] public ushort vt;
+            [System.Runtime.InteropServices.FieldOffset(8)] public IntPtr pwszVal;
+
+            public static PropVariant FromString(string val)
+            {
+                return new PropVariant
+                {
+                    vt = 31, // VT_LPWSTR
+                    pwszVal = System.Runtime.InteropServices.Marshal.StringToCoTaskMemUni(val)
+                };
+            }
+
+            public void Dispose()
+            {
+                if (pwszVal != IntPtr.Zero)
+                {
+                    System.Runtime.InteropServices.Marshal.FreeCoTaskMem(pwszVal);
+                    pwszVal = IntPtr.Zero;
+                }
+                GC.SuppressFinalize(this);
             }
         }
 
@@ -322,7 +609,7 @@ namespace MusicPower3Setup
                         key.SetValue("UninstallString", $"\"{uninstallerPath}\" -uninstall");
                         key.SetValue("DisplayIcon", $"\"{mainExe}\"");
                         key.SetValue("Publisher", "Elhoussain");
-                        key.SetValue("DisplayVersion", "2.2.0.0");
+                        key.SetValue("DisplayVersion", "2.3.0.0");
                         key.SetValue("NoModify", 1); key.SetValue("NoRepair", 1);
                     }
                 }
