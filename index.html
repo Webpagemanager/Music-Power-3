@@ -206,7 +206,7 @@
             text-shadow: 0 4px 12px rgba(0,0,0,0.8); 
         }
         
-        .subtitle { font-size: 1.2rem; color: #cccccc; max-width: 600px; margin: 0 auto 40px auto; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
+        .subtitle { font-size: 1.2rem; color: #cccccc; max-width: 600px; margin: 0 auto 24px auto; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
         
         .download-btn {
             display: inline-block;
@@ -257,11 +257,13 @@
         .disclaimer {
             background-color: #151515;
             border-left: 4px solid var(--text-secondary);
-            padding: 20px;
-            margin-top: 50px;
-            border-radius: 4px;
+            padding: 16px 20px;
+            max-width: 720px;
+            margin: 0 auto 30px auto;
+            border-radius: 6px;
             font-size: 0.95rem;
             color: #cccccc;
+            text-align: left;
             border-top: 1px solid var(--panel-border);
             border-right: 1px solid var(--panel-border);
             border-bottom: 1px solid var(--panel-border);
@@ -407,8 +409,12 @@
             <h1>Music Power 3</h1>
             <p class="subtitle">A lightning-fast, highly customizable native Windows desktop music player built with WinUI 3.</p>
             
+            <div class="disclaimer">
+                <strong>AI Disclaimer:</strong> The code in this project was generated with AI assistance (models include Gemini, Claude Sonnet, DeepSeek, Qwen Coder, and Antigravity). All other elements were created entirely by a human (me haha). That includes icons (ICO, thumbnail), UI/UX design, and file structure.
+            </div>
+
             <a href="https://github.com/Webpagemanager/Music-Power-3/releases/download/v2.3.0.0/MusicPower3-Installer.exe" class="download-btn">Download for Windows</a>
-            <span class="version-info">Version 2.3.0.0 • Requires Windows 10 (Build 19041) or Windows 11</span>
+            <span class="version-info">Version 2.3.0.0 • Requires Windows 10 (Build 19041) or Windows 11 • <a href="https://github.com/Webpagemanager/Music-Power-3/releases/tag/v2.3.0.0" style="color: var(--accent); text-decoration: none;">Release Notes</a></span>
         </header>
 
         <div class="container">
@@ -437,10 +443,6 @@
                     <h3>Powerful Tagging & Broad Formats</h3>
                     <p>Batch edit tags and artwork powered by TagLib#. Seamless playback for MP3, FLAC, WAV, M4A, AAC, OGG, and WMA.</p>
                 </div>
-            </div>
-
-            <div class="disclaimer">
-                <strong>AI Disclaimer:</strong> The code in this project was generated with AI assistance (models include Gemini 3.1 Pro, Claude Sonnet 5, Deepseek, and Qwen coder 3). All other elements were created entirely by a human (me haha). That includes icons (ICO, thumbnail), UI/UX design, and file structure.
             </div>
         </div>
 
