@@ -60,7 +60,7 @@ namespace MusicPower3
     public static class Program
     {
         // Identity Windows uses for the taskbar group, volume/media flyout and lock screen controls.
-        public const string AppUserModelId = "Elhoussain.MusicPower3";
+        public const string AppUserModelId = "Music Power 3";
         private const string InstanceKey = "MusicPower3.Main";
 
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]

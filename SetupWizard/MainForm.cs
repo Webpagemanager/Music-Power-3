@@ -379,7 +379,7 @@ namespace MusicPower3Setup
                     if (progKey != null)
                     {
                         progKey.SetValue("", "Audio File");
-                        progKey.SetValue("AppUserModelID", "Elhoussain.MusicPower3");
+                        progKey.SetValue("AppUserModelID", "Music Power 3");
                         using var iconKey = progKey.CreateSubKey("DefaultIcon");
                         iconKey?.SetValue("", $"\"{mainExe}\",0");
                         using var cmdKey = progKey.CreateSubKey(@"shell\open\command");
@@ -446,7 +446,7 @@ namespace MusicPower3Setup
                     }
                 }
 
-                using (var aumidKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\Elhoussain.MusicPower3"))
+                using (var aumidKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\Music Power 3"))
                 {
                     if (aumidKey != null)
                     {
@@ -482,7 +482,7 @@ namespace MusicPower3Setup
                     regApp?.DeleteValue("MusicPower3", false);
                 }
 
-                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\Elhoussain.MusicPower3", false);
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\Music Power 3", false);
 
                 SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
             }
@@ -506,7 +506,7 @@ namespace MusicPower3Setup
 
                 var store = (IPropertyStore)link;
                 var pkey = new PropertyKey(new Guid("9F4C2855-9F79-48D7-9E68-7D960F80227C"), 5);
-                using (var pv = PropVariant.FromString("Elhoussain.MusicPower3"))
+                using (var pv = PropVariant.FromString("Music Power 3"))
                 {
                     store.SetValue(ref pkey, pv);
                     store.Commit();

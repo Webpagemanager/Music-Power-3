@@ -11,7 +11,7 @@ A native Windows desktop music player built with **WinUI 3** (Windows App SDK), 
 
 ## Features
 
-- **Windows 11 Media Controls & Quick Settings** — Full System Media Transport Controls (SMTC) integration with explicit Application User Model ID (`Elhoussain.MusicPower3`), displaying the application name, icon, and live track artwork in the Windows 11 volume flyout, lock screen, and Quick Settings without generic "Unknown app" labels.
+- **Windows 11 Media Controls & Quick Settings** — Full System Media Transport Controls (SMTC) integration with explicit Application User Model ID (`Music Power 3`), displaying the application name, icon, and live track artwork in the Windows 11 volume flyout, lock screen, and Quick Settings without generic "Unknown app" labels.
 - **Windows Explorer Integration** — Integrated into the Windows Explorer "Open with" context menu for all supported formats (`.mp3`, `.flac`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.wma`).
 - **Single-Instance Redirection** — Launching or opening an audio file while the player is active forwards the track directly to the running window without spawning duplicate instances.
 - **MusicBee-Inspired Playback Queue** — Right-click any track to select "Play next" or "Add to queue" individually or in batch. Inspect and manage upcoming tracks via the dedicated transport queue flyout with an `InfoBadge` track counter, per-item removal, and clear controls.
