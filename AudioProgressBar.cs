@@ -1,24 +1,44 @@
 using System;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
+using Windows.System;
 using Windows.UI;
 
 namespace MusicPower3
 {
+    /// <summary>
+    /// Lightweight Windows 11 style slider / progress bar. Everything is plain vector shapes with no
+    /// images, shaders or animations, so it costs practically nothing to render.
+    /// </summary>
     public sealed class AudioProgressBar : UserControl
     {
+        // Win11 slider metrics: 4 px track that grows on hover, 20 px thumb with an accent core.
+        private const double RestThickness = 4.0;
+        private const double HoverThickness = 6.0;
+        private const double ThumbSize = 20.0;
+        private const double ThumbCoreRest = 12.0;
+        private const double ThumbCoreHover = 14.0;
+        private const double ThumbCorePressed = 10.0;
+
         private readonly Grid _rootGrid;
         private readonly Border _trackBorder;
         private readonly Border _fillBorder;
         private readonly Grid _thumbContainer;
+        private readonly Ellipse _thumbOuter;
+        private readonly Ellipse _thumbCore;
         private readonly TranslateTransform _thumbTransform;
 
         private bool _isScrubbing = false;
+        private bool _isHovered = false;
+        private bool _hasFocus = false;
 
         public event EventHandler<double>? ValueChanged;
         public event EventHandler<double>? ScrubbingStarted;
@@ -91,7 +111,14 @@ namespace MusicPower3
 
         private static void OnValuePropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            if (d is AudioProgressBar bar && !bar._isScrubbing) bar.UpdateVisuals();
+            if (d is not AudioProgressBar bar) return;
+            if (!bar._isScrubbing) bar.UpdateVisuals();
+
+            if (e.Property == ValueProperty && AutomationPeer.ListenerExists(AutomationEvents.PropertyChanged)
+                && FrameworkElementAutomationPeer.FromElement(bar) is AudioProgressBarAutomationPeer peer)
+            {
+                peer.RaiseValueChanged((double)e.OldValue, (double)e.NewValue);
+            }
         }
 
         private static void OnOrientationChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -101,18 +128,16 @@ namespace MusicPower3
 
         private static void OnThumbVisibilityChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            if (d is AudioProgressBar bar && e.NewValue is bool alwaysVisible)
-            {
-                bar._thumbContainer.Opacity = alwaysVisible ? 1.0 : 0.0;
-            }
+            if (d is AudioProgressBar bar) bar.UpdateInteractionState();
         }
 
         private static void OnAccentColorChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is AudioProgressBar bar && e.NewValue is Color col)
             {
-                Color solidCol = Color.FromArgb(255, col.R, col.G, col.B);
-                bar._fillBorder.Background = new SolidColorBrush(solidCol);
+                var solid = new SolidColorBrush(Color.FromArgb(255, col.R, col.G, col.B));
+                bar._fillBorder.Background = solid;
+                bar._thumbCore.Fill = solid;
             }
         }
 
@@ -121,43 +146,41 @@ namespace MusicPower3
         public AudioProgressBar()
         {
             this.IsHitTestVisible = true;
+            this.IsTabStop = true;
+            this.UseSystemFocusVisuals = true;
 
             _rootGrid = new Grid { Background = new SolidColorBrush(Colors.Transparent) };
 
-            // CRISP TRACK VISIBILITY: 20% white fill with a 33% white border so it never looks invisible
-            _trackBorder = new Border
-            {
-                CornerRadius = new CornerRadius(3),
-                Background = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
-                BorderThickness = new Thickness(1)
-            };
+            _trackBorder = new Border { CornerRadius = new CornerRadius(RestThickness / 2) };
 
             Color initialAccent = Color.FromArgb(255, AccentColor.R, AccentColor.G, AccentColor.B);
             _fillBorder = new Border
             {
-                CornerRadius = new CornerRadius(3),
+                CornerRadius = new CornerRadius(RestThickness / 2),
                 Background = new SolidColorBrush(initialAccent)
             };
 
             _thumbTransform = new TranslateTransform();
-            _thumbContainer = new Grid
+            _thumbOuter = new Ellipse { Width = ThumbSize, Height = ThumbSize, StrokeThickness = 1 };
+            _thumbCore = new Ellipse
             {
-                Width = 20,
-                Height = 20,
-                RenderTransform = _thumbTransform,
-                Opacity = IsThumbAlwaysVisible ? 1.0 : 0.0,
-                IsHitTestVisible = false
+                Width = ThumbCoreRest,
+                Height = ThumbCoreRest,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Fill = new SolidColorBrush(initialAccent)
             };
 
-            var thumbImage = new Image
+            _thumbContainer = new Grid
             {
-                Source = new BitmapImage(new Uri("ms-appx:///Assets/thumb.ico")),
-                Stretch = Stretch.Uniform,
-                Width = 20,
-                Height = 20
+                Width = ThumbSize,
+                Height = ThumbSize,
+                RenderTransform = _thumbTransform,
+                Opacity = 0.0,
+                IsHitTestVisible = false
             };
-            _thumbContainer.Children.Add(thumbImage);
+            _thumbContainer.Children.Add(_thumbOuter);
+            _thumbContainer.Children.Add(_thumbCore);
 
             _rootGrid.Children.Add(_trackBorder);
             _rootGrid.Children.Add(_fillBorder);
@@ -165,72 +188,128 @@ namespace MusicPower3
 
             this.Content = _rootGrid;
 
+            ApplyThemeColors();
             UpdateOrientationLayout();
 
             this.SizeChanged += (s, e) => UpdateVisuals();
+            this.ActualThemeChanged += (s, e) => ApplyThemeColors();
             this.PointerEntered += OnPointerEntered;
             this.PointerExited += OnPointerExited;
             this.PointerPressed += OnPointerPressed;
             this.PointerMoved += OnPointerMoved;
             this.PointerReleased += OnPointerReleased;
+            this.PointerCaptureLost += OnPointerCaptureLost;
+            this.GotFocus += (s, e) => { _hasFocus = true; UpdateInteractionState(); };
+            this.LostFocus += (s, e) => { _hasFocus = false; UpdateInteractionState(); };
         }
+
+        // Neutral track/thumb colours that follow the system light/dark theme (values match the Windows 11 slider).
+        private void ApplyThemeColors()
+        {
+            bool light = ActualTheme == ElementTheme.Light;
+            _trackBorder.Background = new SolidColorBrush(light ? Color.FromArgb(0x72, 0x00, 0x00, 0x00) : Color.FromArgb(0x8B, 0xFF, 0xFF, 0xFF));
+            _thumbOuter.Fill = new SolidColorBrush(light ? Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0xFF, 0x45, 0x45, 0x45));
+            _thumbOuter.Stroke = new SolidColorBrush(light ? Color.FromArgb(0x29, 0x00, 0x00, 0x00) : Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
+        }
+
+        private double CurrentThickness => (_isHovered || _isScrubbing) ? HoverThickness : RestThickness;
 
         private void UpdateOrientationLayout()
         {
+            double t = CurrentThickness;
+            var radius = new CornerRadius(t / 2);
+            _trackBorder.CornerRadius = radius;
+            _fillBorder.CornerRadius = radius;
+
             if (Orientation == Orientation.Horizontal)
             {
-                this.Height = 24; this.Width = double.NaN;
-                _rootGrid.Height = 24; _rootGrid.Width = double.NaN;
-                
-                _trackBorder.Height = 6; _trackBorder.Width = double.NaN;
+                this.Height = ThumbSize + 4; this.Width = double.NaN;
+                _rootGrid.Height = ThumbSize + 4; _rootGrid.Width = double.NaN;
+
+                _trackBorder.Height = t; _trackBorder.Width = double.NaN;
                 _trackBorder.HorizontalAlignment = HorizontalAlignment.Stretch; _trackBorder.VerticalAlignment = VerticalAlignment.Center;
-                
-                _fillBorder.Height = 6; _fillBorder.Width = 0;
+
+                _fillBorder.Height = t;
                 _fillBorder.HorizontalAlignment = HorizontalAlignment.Left; _fillBorder.VerticalAlignment = VerticalAlignment.Center;
-                
+
                 _thumbContainer.HorizontalAlignment = HorizontalAlignment.Left; _thumbContainer.VerticalAlignment = VerticalAlignment.Center;
             }
             else
             {
-                this.Width = 24; this.Height = double.NaN;
-                _rootGrid.Width = 24; _rootGrid.Height = double.NaN;
-                
-                _trackBorder.Width = 6; _trackBorder.Height = double.NaN;
+                this.Width = ThumbSize + 4; this.Height = double.NaN;
+                _rootGrid.Width = ThumbSize + 4; _rootGrid.Height = double.NaN;
+
+                _trackBorder.Width = t; _trackBorder.Height = double.NaN;
                 _trackBorder.HorizontalAlignment = HorizontalAlignment.Center; _trackBorder.VerticalAlignment = VerticalAlignment.Stretch;
-                
-                _fillBorder.Width = 6; _fillBorder.Height = 0;
+
+                _fillBorder.Width = t;
                 _fillBorder.HorizontalAlignment = HorizontalAlignment.Center; _fillBorder.VerticalAlignment = VerticalAlignment.Bottom;
-                
+
                 _thumbContainer.HorizontalAlignment = HorizontalAlignment.Center; _thumbContainer.VerticalAlignment = VerticalAlignment.Top;
             }
             UpdateVisuals();
         }
 
+        // Only the active dimension of the fill is ever set. Setting the opposite one to NaN on an empty
+        // border collapses it to 0 px in WinUI 3.
         private void UpdateVisuals()
         {
             double range = Maximum - Minimum;
             if (range <= 0) return;
             double percentage = Math.Clamp((Value - Minimum) / range, 0.0, 1.0);
+            double half = ThumbSize / 2;
 
-            // CRITICAL FIX: We strictly update only the active dimension (Width for Horizontal, Height for Vertical).
-            // Setting the opposite dimension to double.NaN on an empty border caused WinUI 3 to collapse its size to 0px!
             if (Orientation == Orientation.Horizontal)
             {
                 double width = ActualWidth;
                 if (width <= 0) return;
-                _fillBorder.Width = Math.Max(0, percentage * width);
-                _thumbTransform.X = Math.Clamp((percentage * width) - 10.0, -10.0, Math.Max(-10.0, width - 10.0));
+                _fillBorder.Width = percentage * width;
+                _thumbTransform.X = Math.Clamp((percentage * width) - half, -half, Math.Max(-half, width - half));
                 _thumbTransform.Y = 0;
             }
             else
             {
                 double height = ActualHeight;
                 if (height <= 0) return;
-                _fillBorder.Height = Math.Max(0, percentage * height);
-                double thumbY = height - (percentage * height) - 10.0;
-                _thumbTransform.Y = Math.Clamp(thumbY, -10.0, Math.Max(-10.0, height - 10.0));
+                _fillBorder.Height = percentage * height;
+                double thumbY = height - (percentage * height) - half;
+                _thumbTransform.Y = Math.Clamp(thumbY, -half, Math.Max(-half, height - half));
                 _thumbTransform.X = 0;
             }
+        }
+
+        private void UpdateInteractionState()
+        {
+            _thumbContainer.Opacity = (IsThumbAlwaysVisible || _isHovered || _isScrubbing || _hasFocus) ? 1.0 : 0.0;
+
+            double core = _isScrubbing ? ThumbCorePressed : (_isHovered ? ThumbCoreHover : ThumbCoreRest);
+            _thumbCore.Width = core;
+            _thumbCore.Height = core;
+
+            double t = CurrentThickness;
+            var radius = new CornerRadius(t / 2);
+            _trackBorder.CornerRadius = radius;
+            _fillBorder.CornerRadius = radius;
+            if (Orientation == Orientation.Horizontal) { _trackBorder.Height = t; _fillBorder.Height = t; }
+            else { _trackBorder.Width = t; _fillBorder.Width = t; }
+        }
+
+        // Sets a new value and raises ValueChanged once. Returns false when nothing changed.
+        private bool CommitValue(double rawValue)
+        {
+            double range = Maximum - Minimum;
+            if (range <= 0) return false;
+
+            if (StepFrequency > 0)
+                rawValue = Math.Round((rawValue - Minimum) / StepFrequency) * StepFrequency + Minimum;
+
+            double newValue = Math.Clamp(rawValue, Minimum, Maximum);
+            if (Math.Abs(newValue - Value) < 1e-9) return false;
+
+            Value = newValue;
+            UpdateVisuals();
+            ValueChanged?.Invoke(this, newValue);
+            return true;
         }
 
         private void UpdateValueFromPointer(PointerRoutedEventArgs e)
@@ -239,35 +318,46 @@ namespace MusicPower3
             if (range <= 0) return;
 
             Point pos = e.GetCurrentPoint(this).Position;
-            double percentage = Orientation == Orientation.Horizontal
-                ? Math.Clamp(pos.X / ActualWidth, 0.0, 1.0)
-                : Math.Clamp(1.0 - (pos.Y / ActualHeight), 0.0, 1.0);
-
-            double rawValue = Minimum + (percentage * range);
-            if (StepFrequency > 0)
+            double percentage;
+            if (Orientation == Orientation.Horizontal)
             {
-                rawValue = Math.Round((rawValue - Minimum) / StepFrequency) * StepFrequency + Minimum;
+                if (ActualWidth <= 0) return;
+                percentage = Math.Clamp(pos.X / ActualWidth, 0.0, 1.0);
+            }
+            else
+            {
+                if (ActualHeight <= 0) return;
+                percentage = Math.Clamp(1.0 - (pos.Y / ActualHeight), 0.0, 1.0);
             }
 
-            Value = Math.Clamp(rawValue, Minimum, Maximum);
-            UpdateVisuals();
-            ValueChanged?.Invoke(this, Value);
+            CommitValue(Minimum + (percentage * range));
         }
 
-        private void OnPointerEntered(object sender, PointerRoutedEventArgs e) => _thumbContainer.Opacity = 1.0;
+        internal void SetValueFromAutomation(double value) => CommitValue(value);
+
+        private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
+        {
+            _isHovered = true;
+            UpdateInteractionState();
+        }
 
         private void OnPointerExited(object sender, PointerRoutedEventArgs e)
         {
-            if (!_isScrubbing && !IsThumbAlwaysVisible) _thumbContainer.Opacity = 0.0;
+            _isHovered = false;
+            UpdateInteractionState();
         }
 
         private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
         {
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+
             _isScrubbing = true;
+            Focus(FocusState.Pointer);
             this.CapturePointer(e.Pointer);
-            _thumbContainer.Opacity = 1.0;
-            UpdateValueFromPointer(e);
+            UpdateInteractionState();
             ScrubbingStarted?.Invoke(this, Value);
+            UpdateValueFromPointer(e);
+            e.Handled = true;
         }
 
         private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
@@ -277,19 +367,73 @@ namespace MusicPower3
 
         private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
         {
-            if (_isScrubbing)
-            {
-                _isScrubbing = false;
-                this.ReleasePointerCapture(e.Pointer);
-                UpdateValueFromPointer(e);
-                ScrubbingEnded?.Invoke(this, Value);
+            if (!_isScrubbing) return;
 
-                Point pos = e.GetCurrentPoint(this).Position;
-                if (!IsThumbAlwaysVisible && (pos.X < 0 || pos.X > ActualWidth || pos.Y < 0 || pos.Y > ActualHeight))
-                {
-                    _thumbContainer.Opacity = 0.0;
-                }
-            }
+            UpdateValueFromPointer(e);
+            EndScrubbing();
+            this.ReleasePointerCapture(e.Pointer);
+        }
+
+        private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+        {
+            if (_isScrubbing) EndScrubbing();
+        }
+
+        private void EndScrubbing()
+        {
+            _isScrubbing = false;
+            UpdateVisuals();
+            UpdateInteractionState();
+            ScrubbingEnded?.Invoke(this, Value);
+        }
+
+        protected override void OnKeyDown(KeyRoutedEventArgs e)
+        {
+            double range = Maximum - Minimum;
+            double step = StepFrequency > 0 ? StepFrequency : range * 0.01;
+            double? target = e.Key switch
+            {
+                VirtualKey.Right or VirtualKey.Up => Value + step,
+                VirtualKey.Left or VirtualKey.Down => Value - step,
+                VirtualKey.PageUp => Value + step * 10,
+                VirtualKey.PageDown => Value - step * 10,
+                VirtualKey.Home => Minimum,
+                VirtualKey.End => Maximum,
+                _ => null
+            };
+
+            if (target == null) { base.OnKeyDown(e); return; }
+
+            e.Handled = true;
+            if (CommitValue(target.Value)) ScrubbingEnded?.Invoke(this, Value);
+        }
+
+        protected override AutomationPeer OnCreateAutomationPeer() => new AudioProgressBarAutomationPeer(this);
+
+        /// <summary>Exposes the control to screen readers and UI Automation as a range/slider.</summary>
+        public sealed partial class AudioProgressBarAutomationPeer : FrameworkElementAutomationPeer, IRangeValueProvider
+        {
+            private readonly AudioProgressBar _owner;
+
+            public AudioProgressBarAutomationPeer(AudioProgressBar owner) : base(owner) { _owner = owner; }
+
+            protected override string GetClassNameCore() => nameof(AudioProgressBar);
+            protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Slider;
+
+            protected override object GetPatternCore(PatternInterface patternInterface) =>
+                patternInterface == PatternInterface.RangeValue ? this : base.GetPatternCore(patternInterface);
+
+            public bool IsReadOnly => false;
+            public double LargeChange => (_owner.Maximum - _owner.Minimum) * 0.1;
+            public double SmallChange => _owner.StepFrequency > 0 ? _owner.StepFrequency : (_owner.Maximum - _owner.Minimum) * 0.01;
+            public double Maximum => _owner.Maximum;
+            public double Minimum => _owner.Minimum;
+            public double Value => _owner.Value;
+
+            public void SetValue(double value) => _owner.SetValueFromAutomation(value);
+
+            internal void RaiseValueChanged(double oldValue, double newValue) =>
+                RaisePropertyChangedEvent(RangeValuePatternIdentifiers.ValueProperty, oldValue, newValue);
         }
     }
 }
