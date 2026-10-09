@@ -20,12 +20,14 @@ namespace MusicPower3.Services
         private MediaSource? _currentSource;
         private MediaPlaybackItem? _currentItem;
         private InMemoryRandomAccessStream? _thumbStream;
+        private Track? _currentTrack;
 
         public event EventHandler? EndReached;
         public event EventHandler? PlayRequested;
         public event EventHandler? PauseRequested;
         public event EventHandler? NextRequested;
         public event EventHandler? PreviousRequested;
+        public event Action<Track, TimeSpan>? DurationUpdated;
 
         public long Time => (long)_mediaPlayer.PlaybackSession.Position.TotalMilliseconds;
         public long Length => (long)_mediaPlayer.PlaybackSession.NaturalDuration.TotalMilliseconds;
@@ -36,6 +38,7 @@ namespace MusicPower3.Services
             // calling thread removes the old race where Play() could arrive before the engine was ready.
             _mediaPlayer = new MediaPlayer { AudioCategory = MediaPlayerAudioCategory.Media };
             _mediaPlayer.MediaEnded += (s, e) => EndReached?.Invoke(this, EventArgs.Empty);
+            _mediaPlayer.PlaybackSession.NaturalDurationChanged += OnNaturalDurationChanged;
 
             _smtc = _mediaPlayer.SystemMediaTransportControls;
             _smtc.IsEnabled = true;
@@ -57,9 +60,20 @@ namespace MusicPower3.Services
             cm.PreviousReceived += (c, e) => { e.Handled = true; PreviousRequested?.Invoke(this, EventArgs.Empty); };
         }
 
+        private void OnNaturalDurationChanged(MediaPlaybackSession sender, object args)
+        {
+            var dur = sender.NaturalDuration;
+            if (_currentTrack != null && dur > TimeSpan.Zero && Math.Abs((_currentTrack.Duration - dur).TotalMilliseconds) > 500)
+            {
+                _currentTrack.Duration = dur;
+                DurationUpdated?.Invoke(_currentTrack, dur);
+            }
+        }
+
         public void Play(Track track)
         {
             if (track == null) return;
+            _currentTrack = track;
             try
             {
                 var source = MediaSource.CreateFromUri(new Uri(track.FilePath, UriKind.Absolute));
@@ -77,6 +91,7 @@ namespace MusicPower3.Services
                 try
                 {
                     _smtc.DisplayUpdater.Type = MediaPlaybackType.Music;
+                    _smtc.DisplayUpdater.AppMediaId = "MusicPower3";
                     _smtc.DisplayUpdater.MusicProperties.Title = track.Title;
                     _smtc.DisplayUpdater.MusicProperties.Artist = track.Artist;
                     _smtc.DisplayUpdater.MusicProperties.AlbumTitle = track.Album;
@@ -227,6 +242,72 @@ namespace MusicPower3.Services
         }
     }
 
+    public static class ShellPropertyReader
+    {
+        [System.Runtime.InteropServices.DllImport("shell32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode, PreserveSig = false)]
+        private static extern void SHGetPropertyStoreFromParsingName(
+            [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszPath,
+            IntPtr pbc,
+            uint flags,
+            [System.Runtime.InteropServices.In] ref Guid riid,
+            out IPropertyStore ppv);
+
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown), System.Runtime.InteropServices.Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+        public interface IPropertyStore
+        {
+            int GetCount(out uint cProps);
+            int GetAt(uint iProp, out PropertyKey pkey);
+            int GetValue(ref PropertyKey key, out PropVariant pv);
+            int SetValue(ref PropertyKey key, ref PropVariant pv);
+            int Commit();
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 4)]
+        public struct PropertyKey
+        {
+            public Guid fmtid;
+            public uint pid;
+            public PropertyKey(Guid g, uint p) { fmtid = g; pid = p; }
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+        public struct PropVariant
+        {
+            [System.Runtime.InteropServices.FieldOffset(0)] public ushort vt;
+            [System.Runtime.InteropServices.FieldOffset(8)] public ulong uhVal;
+        }
+
+        private static readonly Guid IID_IPropertyStore = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+        private static PropertyKey PKEY_Media_Duration = new PropertyKey(new Guid("64440490-4C8B-11D1-8B70-080036B11A03"), 3);
+
+        public static TimeSpan GetDuration(string filePath)
+        {
+            IPropertyStore? store = null;
+            try
+            {
+                Guid iid = IID_IPropertyStore;
+                SHGetPropertyStoreFromParsingName(filePath, IntPtr.Zero, 0, ref iid, out store);
+                if (store != null)
+                {
+                    store.GetValue(ref PKEY_Media_Duration, out PropVariant pv);
+                    if (pv.vt == 21 && pv.uhVal > 0)
+                    {
+                        return TimeSpan.FromTicks((long)pv.uhVal);
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                if (store != null)
+                {
+                    try { System.Runtime.InteropServices.Marshal.ReleaseComObject(store); } catch { }
+                }
+            }
+            return TimeSpan.Zero;
+        }
+    }
+
     public static class TrackMetadataReader
     {
         public static Track Read(string filePath) => Read(new FileInfo(filePath));
@@ -238,7 +319,7 @@ namespace MusicPower3.Services
             string filePath = info.FullName;
             string title = System.IO.Path.GetFileNameWithoutExtension(filePath);
             string artist = "Unknown Artist"; string album = "Unknown Album";
-            TimeSpan duration = TimeSpan.Zero;
+            TimeSpan duration = ShellPropertyReader.GetDuration(filePath);
 
             try
             {
@@ -247,7 +328,7 @@ namespace MusicPower3.Services
                 if (!string.IsNullOrWhiteSpace(file.Tag.Title)) title = file.Tag.Title;
                 if (file.Tag.Performers.Length > 0) artist = string.Join(", ", file.Tag.Performers);
                 if (!string.IsNullOrWhiteSpace(file.Tag.Album)) album = file.Tag.Album;
-                duration = file.Properties.Duration;
+                if (duration <= TimeSpan.Zero) duration = file.Properties.Duration;
             }
             catch { }
 

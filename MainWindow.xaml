@@ -67,17 +67,16 @@
         </StackPanel>
 
         <Grid Grid.Row="1" Padding="16,0,16,12">
-            <Border Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="{StaticResource OverlayCornerRadius}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+            <tk:LayoutTransformControl HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                <tk:LayoutTransformControl.Transform><ScaleTransform x:Name="ContentTransform" ScaleX="1.0" ScaleY="1.0"/></tk:LayoutTransformControl.Transform>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="{StaticResource OverlayCornerRadius}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                    <tk:LayoutTransformControl Grid.Column="0">
-                        <tk:LayoutTransformControl.Transform><ScaleTransform x:Name="LibraryTransform" ScaleX="1.0" ScaleY="1.0"/></tk:LayoutTransformControl.Transform>
-
-                        <Grid>
+                        <Grid Grid.Column="0">
                             <Grid x:Name="LibraryContainer" Padding="20">
                                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
 
@@ -245,16 +244,13 @@
                                 </Grid>
                             </Grid>
                         </Grid>
-                    </tk:LayoutTransformControl>
 
-                    <Border x:Name="ArtworkPanel" Grid.Column="1" Background="{ThemeResource ControlFillColorSecondaryBrush}" CornerRadius="0,8,8,0">
-                        <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Grid Width="600" Height="600">
-                                <Image Source="{x:Bind NowPlayingTrack.HighResArtworkImage, Mode=OneWay}" Stretch="UniformToFill"/>
-                                <FontIcon Glyph="&#xE8D6;" FontSize="160" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Visibility="{x:Bind GetFallbackVisibility(NowPlayingTrack), Mode=OneWay}"/>
+                        <Border x:Name="ArtworkPanel" Grid.Column="1" Background="Transparent" BorderThickness="0" CornerRadius="0,8,8,0">
+                            <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Image Source="{x:Bind NowPlayingTrack.HighResArtworkImage, Mode=OneWay}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="600" MaxHeight="600"/>
+                                <FontIcon Glyph="&#xE8D6;" FontSize="120" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Visibility="{x:Bind GetFallbackVisibility(NowPlayingTrack), Mode=OneWay}"/>
                             </Grid>
-                        </Viewbox>
-                    </Border>
+                        </Border>
 
                     <!-- Settings overlay: plain scrolling cards, no scaling tricks, so text stays crisp at any size. -->
                     <Grid x:Name="SettingsOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" CornerRadius="{StaticResource OverlayCornerRadius}">
@@ -362,7 +358,8 @@
                     </Grid>
                 </Grid>
             </Border>
-        </Grid>
+        </tk:LayoutTransformControl>
+    </Grid>
 
         <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="{StaticResource OverlayCornerRadius}" Padding="24,16" Margin="16,0,16,16">
             <tk:LayoutTransformControl HorizontalAlignment="Stretch">
@@ -424,7 +421,7 @@
                             <Button x:Name="QueueButton" Grid.Column="0" Style="{StaticResource ToolbarIconButtonStyle}" ToolTipService.ToolTip="Up next" AutomationProperties.Name="Up next queue">
                                 <Grid>
                                     <FontIcon Glyph="&#xE8FD;" FontSize="16"/>
-                                    <InfoBadge Value="{x:Bind QueueCount, Mode=OneWay}" Visibility="{x:Bind QueueBadgeVisibility, Mode=OneWay}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-10,-14,0"/>
+                                    <InfoBadge Value="{x:Bind QueueCount, Mode=OneWay}" Visibility="{x:Bind QueueBadgeVisibility, Mode=OneWay}" FontFamily="{ThemeResource ContentControlThemeFontFamily}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-10,-14,0"/>
                                 </Grid>
                                 <Button.Flyout>
                                     <Flyout Placement="TopEdgeAlignedRight">
@@ -441,7 +438,7 @@
 
                                             <Grid Grid.Row="1">
                                                 <TextBlock Text="Nothing queued. Right-click a track and choose Play next or Add to queue." Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Visibility="{x:Bind QueueEmptyVisibility, Mode=OneWay}"/>
-                                                <ListView ItemsSource="{x:Bind UpcomingQueue}" SelectionMode="None" MaxHeight="360" ShowsScrollingPlaceholders="False">
+                                                <ListView ItemsSource="{x:Bind UpcomingQueue}" SelectionMode="Single" CanReorderItems="True" CanDragItems="True" AllowDrop="True" ReorderMode="Enabled" MaxHeight="360" ShowsScrollingPlaceholders="False">
                                                     <ListView.ItemTemplate>
                                                         <DataTemplate x:DataType="models:Track">
                                                             <Grid ColumnSpacing="8" Padding="0,4">

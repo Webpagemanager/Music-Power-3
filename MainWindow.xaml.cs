@@ -86,7 +86,7 @@ namespace MusicPower3
         private bool _isInitializingUi = false;
 
         // ---- Timers (all low frequency; none runs while idle) ----
-        private readonly DispatcherTimer _progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        private bool _isRenderingHooked = false;
         private readonly DispatcherTimer _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         private readonly DispatcherTimer _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
         private readonly DispatcherTimer _accentTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
@@ -103,15 +103,25 @@ namespace MusicPower3
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(AppTitleBar);
             this.Closed += MainWindow_Closed;
-            this.VisibilityChanged += (s, e) => _windowVisible = e.Visible;
+            this.VisibilityChanged += (s, e) => { _windowVisible = e.Visible; UpdateRenderingHook(); };
 
             SetWindowIcon();
 
             RootGrid.DataContext = this;
 
-            _progressTimer.Tick += ProgressTimer_Tick;
             _searchTimer.Tick += (s, e) => { _searchTimer.Stop(); ApplySortAndFilter(); };
-            _saveTimer.Tick += (s, e) => { _saveTimer.Stop(); var snapshot = Settings; Task.Run(() => SettingsStore.Save(snapshot)); };
+            _saveTimer.Tick += (s, e) =>
+            {
+                _saveTimer.Stop();
+                var snapshot = Settings;
+                Task.Run(() => SettingsStore.Save(snapshot));
+                if (_libraryDirty && _fullCache.Count > 0)
+                {
+                    var libSnapshot = _fullCache.ToList();
+                    Task.Run(() => LibraryCache.Save(libSnapshot));
+                    _libraryDirty = false;
+                }
+            };
             _accentTimer.Tick += (s, e) => { _accentTimer.Stop(); ApplyAccentTheme(true); RequestSaveSettings(); };
 
             UpcomingQueue.CollectionChanged += OnUpcomingQueueChanged;
@@ -126,6 +136,11 @@ namespace MusicPower3
                 App.MusicEngine.PauseRequested += (s, e) => DispatcherQueue.TryEnqueue(() => { if (_isPlaying) OnPlayPauseClick(this, new RoutedEventArgs()); });
                 App.MusicEngine.NextRequested += (s, e) => DispatcherQueue.TryEnqueue(() => PlayNext(true));
                 App.MusicEngine.PreviousRequested += (s, e) => DispatcherQueue.TryEnqueue(() => PlayPrevious());
+                App.MusicEngine.DurationUpdated += (track, newDuration) => DispatcherQueue.TryEnqueue(() =>
+                {
+                    _libraryDirty = true;
+                    RequestSaveSettings();
+                });
             }
 
             RootGrid.ActualThemeChanged += (s, e) => { if (!_isRefreshingAccentTheme) ApplyAccentTheme(true); };
@@ -201,7 +216,8 @@ namespace MusicPower3
 
         private void MainWindow_Closed(object sender, WindowEventArgs args)
         {
-            _progressTimer.Stop(); _searchTimer.Stop(); _saveTimer.Stop(); _accentTimer.Stop();
+            if (_isRenderingHooked) { CompositionTarget.Rendering -= OnCompositionRendering; _isRenderingHooked = false; }
+            _searchTimer.Stop(); _saveTimer.Stop(); _accentTimer.Stop();
             _uiSettings.ColorValuesChanged -= OnSystemColorValuesChanged;
             App.FileActivated -= OnFileActivated;
 
@@ -411,7 +427,7 @@ namespace MusicPower3
 
         #region Transport and progress
 
-        private void ProgressTimer_Tick(object? sender, object e)
+        private void OnCompositionRendering(object? sender, object e)
         {
             var engine = App.MusicEngine;
             if (_isScrubbing || !_windowVisible || engine == null) return;
@@ -434,7 +450,22 @@ namespace MusicPower3
         private void SetPlayingState(bool playing)
         {
             _isPlaying = playing;
-            if (playing) _progressTimer.Start(); else _progressTimer.Stop();
+            UpdateRenderingHook();
+        }
+
+        private void UpdateRenderingHook()
+        {
+            bool shouldRender = _isPlaying && _windowVisible;
+            if (shouldRender && !_isRenderingHooked)
+            {
+                CompositionTarget.Rendering += OnCompositionRendering;
+                _isRenderingHooked = true;
+            }
+            else if (!shouldRender && _isRenderingHooked)
+            {
+                CompositionTarget.Rendering -= OnCompositionRendering;
+                _isRenderingHooked = false;
+            }
         }
 
         private void ProgressSlider_ScrubbingStarted(object sender, double value) { _isScrubbing = true; }
@@ -462,7 +493,7 @@ namespace MusicPower3
 
         private void ApplyScale(double scale)
         {
-            if (LibraryTransform != null) { LibraryTransform.ScaleX = scale; LibraryTransform.ScaleY = scale; }
+            if (ContentTransform != null) { ContentTransform.ScaleX = scale; ContentTransform.ScaleY = scale; }
             if (TransportTransform != null) { TransportTransform.ScaleX = scale; TransportTransform.ScaleY = scale; }
             if (GlobalScaleText != null) GlobalScaleText.Text = $"{scale:P0}";
         }
@@ -500,7 +531,7 @@ namespace MusicPower3
             IsLoading = false;
         }
 
-        private static List<Track> ScanFolder(string folderPath, List<Track> existing)
+        private static List<Track> ScanFolder(string folderPath, List<Track> existing, bool refreshDurations = false)
         {
             // Streaming enumeration: FileInfo objects carry timestamps from the directory listing itself,
             // so no per-file stat calls are needed and nothing is read for unchanged files.
@@ -522,6 +553,11 @@ namespace MusicPower3
             {
                 if (cached.TryGetValue(fi.FullName, out var old) && Math.Abs((fi.LastWriteTime - old.DateModified).TotalSeconds) < 1)
                 {
+                    if (refreshDurations || old.Duration <= TimeSpan.Zero)
+                    {
+                        var dur = ShellPropertyReader.GetDuration(fi.FullName);
+                        if (dur > TimeSpan.Zero) old.Duration = dur;
+                    }
                     result.Add(old);   // unchanged file: reuse the cached entry, no file access at all
                     return;
                 }
@@ -532,7 +568,7 @@ namespace MusicPower3
             return result.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        private async Task ProcessAudioFilesAsync(string folderPath, bool isIncrementalScan)
+        private async Task ProcessAudioFilesAsync(string folderPath, bool isIncrementalScan, bool refreshDurations = false)
         {
             if (IsLoading) return;
             IsLoading = true;
@@ -540,7 +576,7 @@ namespace MusicPower3
             var existing = isIncrementalScan ? _fullCache.ToList() : new List<Track>();
             try
             {
-                _fullCache = await Task.Run(() => ScanFolder(folderPath, existing));
+                _fullCache = await Task.Run(() => ScanFolder(folderPath, existing, refreshDurations));
                 _libraryDirty = true;
                 ApplySortAndFilter();
 
@@ -905,7 +941,7 @@ namespace MusicPower3
                 OnAddFolderClick(sender, e);
                 return;
             }
-            await ProcessAudioFilesAsync(Settings.LastLibraryPath, true);
+            await ProcessAudioFilesAsync(Settings.LastLibraryPath, true, refreshDurations: true);
         }
 
         #endregion

@@ -169,7 +169,38 @@ namespace MusicPower3Setup
             }
             else
             {
-                _installDir = _txtPath.Text.Trim();
+                string rawPath = (_txtPath.Text ?? string.Empty).Trim().Replace('/', '\\');
+                while (rawPath.Contains(@"\\"))
+                {
+                    int driveIdx = rawPath.IndexOf(":\\");
+                    if (driveIdx == 1)
+                    {
+                        string drive = rawPath.Substring(0, 3);
+                        string rest = rawPath.Substring(3).Replace(@"\\", @"\");
+                        rawPath = drive + rest;
+                    }
+                    else
+                    {
+                        rawPath = rawPath.Replace(@"\\", @"\");
+                    }
+                }
+
+                string progFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                if (rawPath.Equals(@"C:\programfiles", StringComparison.OrdinalIgnoreCase) ||
+                    rawPath.Equals(@"C:\program files", StringComparison.OrdinalIgnoreCase) ||
+                    rawPath.Equals(progFiles, StringComparison.OrdinalIgnoreCase))
+                {
+                    rawPath = Path.Combine(progFiles, "Music Power 3");
+                }
+
+                try
+                {
+                    _installDir = Path.GetFullPath(rawPath);
+                }
+                catch
+                {
+                    _installDir = rawPath;
+                }
                 
                 bool isUpdate = Directory.Exists(_installDir) && File.Exists(Path.Combine(_installDir, "MusicPower3.exe"));
 
@@ -226,6 +257,19 @@ namespace MusicPower3Setup
         {
             try
             {
+                _lblStatus.Text = "Closing running instances...";
+                await Task.Run(() =>
+                {
+                    try
+                    {
+                        foreach (var proc in Process.GetProcessesByName("MusicPower3"))
+                        {
+                            try { proc.Kill(); proc.WaitForExit(3000); } catch { }
+                        }
+                    }
+                    catch { }
+                });
+
                 _lblStatus.Text = "Extracting files...";
                 _progressBar.Value = 25;
 
@@ -379,7 +423,7 @@ namespace MusicPower3Setup
                     if (progKey != null)
                     {
                         progKey.SetValue("", "Audio File");
-                        progKey.SetValue("AppUserModelID", "Music Power 3");
+                        progKey.SetValue("AppUserModelID", "MusicPower3");
                         using var iconKey = progKey.CreateSubKey("DefaultIcon");
                         iconKey?.SetValue("", $"\"{mainExe}\",0");
                         using var cmdKey = progKey.CreateSubKey(@"shell\open\command");
@@ -446,7 +490,7 @@ namespace MusicPower3Setup
                     }
                 }
 
-                using (var aumidKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\Music Power 3"))
+                using (var aumidKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\MusicPower3"))
                 {
                     if (aumidKey != null)
                     {
@@ -454,6 +498,19 @@ namespace MusicPower3Setup
                         aumidKey.SetValue("IconUri", iconPath);
                     }
                 }
+
+                try
+                {
+                    using (var aumidKeyLM = Registry.LocalMachine.CreateSubKey(@"Software\Classes\AppUserModelId\MusicPower3"))
+                    {
+                        if (aumidKeyLM != null)
+                        {
+                            aumidKeyLM.SetValue("DisplayName", "Music Power 3");
+                            aumidKeyLM.SetValue("IconUri", iconPath);
+                        }
+                    }
+                }
+                catch { }
 
                 SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
             }
@@ -482,7 +539,9 @@ namespace MusicPower3Setup
                     regApp?.DeleteValue("MusicPower3", false);
                 }
 
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\MusicPower3", false);
                 Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\Music Power 3", false);
+                try { Registry.LocalMachine.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\MusicPower3", false); } catch { }
 
                 SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
             }
@@ -506,7 +565,7 @@ namespace MusicPower3Setup
 
                 var store = (IPropertyStore)link;
                 var pkey = new PropertyKey(new Guid("9F4C2855-9F79-48D7-9E68-7D960F80227C"), 5);
-                using (var pv = PropVariant.FromString("Music Power 3"))
+                using (var pv = PropVariant.FromString("MusicPower3"))
                 {
                     store.SetValue(ref pkey, pv);
                     store.Commit();

@@ -46,9 +46,8 @@ namespace MusicPower3.Models
 
     public sealed class Track : INotifyPropertyChanged
     {
-        private const int ThumbnailDecodeWidth = 96;   // list thumbnails: small decode keeps RAM low
-        private const int HighResDecodeWidth = 600;      // now-playing panel only (one image at a time)
-        private const int ThumbnailCacheLimit = 80;
+        private const int ThumbnailDecodeWidth = 72;   // list thumbnails: rendered at 48x48, 72px keeps RAM low
+        private const int ThumbnailCacheLimit = 40;    // compact cache prevents working set memory creep
 
         private static readonly object _cacheLock = new();
         private static readonly Dictionary<string, BitmapImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
@@ -80,7 +79,20 @@ namespace MusicPower3.Models
         public string Title { get => _title; set { if (_title != value) { _title = value; OnPropertyChanged(); } } }
         public string Artist { get => _artist; set { if (_artist != value) { _artist = value; OnPropertyChanged(); } } }
         public string Album { get => _album; set { if (_album != value) { _album = value; OnPropertyChanged(); } } }
-        public TimeSpan Duration { get; set; }
+        private TimeSpan _duration;
+        public TimeSpan Duration
+        {
+            get => _duration;
+            set
+            {
+                if (_duration != value)
+                {
+                    _duration = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(DisplayDuration));
+                }
+            }
+        }
         public DateTime DateAdded { get; set; }
         
         public DateTime DateModified 
@@ -156,7 +168,8 @@ namespace MusicPower3.Models
         {
             try
             {
-                var bitmap = new BitmapImage { DecodePixelWidth = decodeWidth };
+                var bitmap = new BitmapImage();
+                if (decodeWidth > 0) bitmap.DecodePixelWidth = decodeWidth;
                 using var stream = new InMemoryRandomAccessStream();
                 await stream.WriteAsync(data.AsBuffer());
                 stream.Seek(0);
@@ -216,7 +229,8 @@ namespace MusicPower3.Models
                 {
                     // The track may have stopped playing while the file was being read.
                     if (!_isPlaying) return;
-                    var bitmap = await DecodeAsync(data, HighResDecodeWidth);
+                    // decodeWidth = 0 to render the currently playing track in full native resolution
+                    var bitmap = await DecodeAsync(data, 0);
                     if (bitmap == null || !_isPlaying) return;
 
                     _highResArtworkImage = bitmap;

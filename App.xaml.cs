@@ -19,6 +19,17 @@ namespace MusicPower3
 
         public App()
         {
+            this.UnhandledException += (sender, e) =>
+            {
+                try
+                {
+                    string dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MusicPower3");
+                    System.IO.Directory.CreateDirectory(dir);
+                    string logFile = System.IO.Path.Combine(dir, "crash.log");
+                    System.IO.File.AppendAllText(logFile, $"[{DateTime.UtcNow:O}] {e.Message}\n{e.Exception}\n\n");
+                }
+                catch { }
+            };
             this.InitializeComponent();
             MusicEngine = new AudioEngine();
         }
