@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -15,11 +16,54 @@ using Windows.UI;
 namespace MusicPower3
 {
     /// <summary>
-    /// Lightweight Windows 11 style slider / progress bar. Everything is plain vector shapes with no
-    /// images, shaders or animations, so it costs practically nothing to render.
+    /// Lightweight Windows 11 style slider / progress bar powered by a high-performance C++ native engine (NativeAudioProgress.dll).
     /// </summary>
     public sealed class AudioProgressBar : UserControl
     {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ProgressBarLayoutResult
+        {
+            public double TrackThickness;
+            public double TrackCornerRadius;
+            public double FillLength;
+            public double ThumbOffsetX;
+            public double ThumbOffsetY;
+            public double ThumbCoreSize;
+            public double ThumbOuterSize;
+            public double ThumbOpacity;
+            [MarshalAs(UnmanagedType.I1)]
+            public bool IsThumbVisible;
+        }
+
+        [DllImport("NativeAudioProgress.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressGCTransition]
+        private static extern void NativeProgressBar_CalculateLayout(
+            double value,
+            double minimum,
+            double maximum,
+            double availableWidth,
+            double availableHeight,
+            int orientation,
+            [MarshalAs(UnmanagedType.I1)] bool isHovered,
+            [MarshalAs(UnmanagedType.I1)] bool isScrubbing,
+            [MarshalAs(UnmanagedType.I1)] bool isPressed,
+            [MarshalAs(UnmanagedType.I1)] bool isThumbAlwaysVisible,
+            out ProgressBarLayoutResult outResult
+        );
+
+        [DllImport("NativeAudioProgress.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressGCTransition]
+        private static extern double NativeProgressBar_CalculateValueFromPointer(
+            double pointerX,
+            double pointerY,
+            double availableWidth,
+            double availableHeight,
+            int orientation,
+            double minimum,
+            double maximum,
+            double stepFrequency
+        );
+
         // Win11 slider metrics: 4 px track that grows on hover, 20 px thumb with an accent core.
         private const double RestThickness = 4.0;
         private const double HoverThickness = 6.0;
@@ -38,7 +82,6 @@ namespace MusicPower3
 
         private bool _isScrubbing = false;
         private bool _isHovered = false;
-        private bool _hasFocus = false;
 
         public event EventHandler<double>? ValueChanged;
         public event EventHandler<double>? ScrubbingStarted;
@@ -199,8 +242,6 @@ namespace MusicPower3
             this.PointerMoved += OnPointerMoved;
             this.PointerReleased += OnPointerReleased;
             this.PointerCaptureLost += OnPointerCaptureLost;
-            this.GotFocus += (s, e) => { _hasFocus = true; UpdateInteractionState(); };
-            this.LostFocus += (s, e) => { _hasFocus = false; UpdateInteractionState(); };
         }
 
         // Neutral track/thumb colours that follow the system light/dark theme (values match the Windows 11 slider).
@@ -212,26 +253,15 @@ namespace MusicPower3
             _thumbOuter.Stroke = new SolidColorBrush(light ? Color.FromArgb(0x29, 0x00, 0x00, 0x00) : Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
         }
 
-        private double CurrentThickness => (_isHovered || _isScrubbing) ? HoverThickness : RestThickness;
-
         private void UpdateOrientationLayout()
         {
-            double t = CurrentThickness;
-            var radius = new CornerRadius(t / 2);
-            _trackBorder.CornerRadius = radius;
-            _fillBorder.CornerRadius = radius;
-
             if (Orientation == Orientation.Horizontal)
             {
                 this.Height = ThumbSize + 4; this.Width = double.NaN;
                 _rootGrid.Height = ThumbSize + 4; _rootGrid.Width = double.NaN;
 
-                _trackBorder.Height = t; _trackBorder.Width = double.NaN;
                 _trackBorder.HorizontalAlignment = HorizontalAlignment.Stretch; _trackBorder.VerticalAlignment = VerticalAlignment.Center;
-
-                _fillBorder.Height = t;
                 _fillBorder.HorizontalAlignment = HorizontalAlignment.Left; _fillBorder.VerticalAlignment = VerticalAlignment.Center;
-
                 _thumbContainer.HorizontalAlignment = HorizontalAlignment.Left; _thumbContainer.VerticalAlignment = VerticalAlignment.Center;
             }
             else
@@ -239,30 +269,86 @@ namespace MusicPower3
                 this.Width = ThumbSize + 4; this.Height = double.NaN;
                 _rootGrid.Width = ThumbSize + 4; _rootGrid.Height = double.NaN;
 
-                _trackBorder.Width = t; _trackBorder.Height = double.NaN;
                 _trackBorder.HorizontalAlignment = HorizontalAlignment.Center; _trackBorder.VerticalAlignment = VerticalAlignment.Stretch;
-
-                _fillBorder.Width = t;
                 _fillBorder.HorizontalAlignment = HorizontalAlignment.Center; _fillBorder.VerticalAlignment = VerticalAlignment.Bottom;
-
                 _thumbContainer.HorizontalAlignment = HorizontalAlignment.Center; _thumbContainer.VerticalAlignment = VerticalAlignment.Top;
             }
             UpdateVisuals();
         }
 
-        // Only the active dimension of the fill is ever set. Setting the opposite one to NaN on an empty
-        // border collapses it to 0 px in WinUI 3.
         private void UpdateVisuals()
+        {
+            double width = ActualWidth;
+            double height = ActualHeight;
+            if (width <= 0 && height <= 0) return;
+
+            try
+            {
+                NativeProgressBar_CalculateLayout(
+                    Value,
+                    Minimum,
+                    Maximum,
+                    width,
+                    height,
+                    Orientation == Orientation.Horizontal ? 0 : 1,
+                    _isHovered,
+                    _isScrubbing,
+                    _isScrubbing,
+                    IsThumbAlwaysVisible,
+                    out ProgressBarLayoutResult layout
+                );
+
+                var radius = new CornerRadius(layout.TrackCornerRadius);
+                _trackBorder.CornerRadius = radius;
+                _fillBorder.CornerRadius = radius;
+
+                if (Orientation == Orientation.Horizontal)
+                {
+                    _trackBorder.Height = layout.TrackThickness;
+                    _fillBorder.Height = layout.TrackThickness;
+                    _fillBorder.Width = layout.FillLength;
+                }
+                else
+                {
+                    _trackBorder.Width = layout.TrackThickness;
+                    _fillBorder.Width = layout.TrackThickness;
+                    _fillBorder.Height = layout.FillLength;
+                }
+
+                _thumbTransform.X = layout.ThumbOffsetX;
+                _thumbTransform.Y = layout.ThumbOffsetY;
+                _thumbContainer.Opacity = layout.ThumbOpacity;
+
+                _thumbCore.Width = layout.ThumbCoreSize;
+                _thumbCore.Height = layout.ThumbCoreSize;
+                _thumbOuter.Width = layout.ThumbOuterSize;
+                _thumbOuter.Height = layout.ThumbOuterSize;
+            }
+            catch
+            {
+                UpdateVisualsManagedFallback();
+            }
+        }
+
+        private void UpdateVisualsManagedFallback()
         {
             double range = Maximum - Minimum;
             if (range <= 0) return;
             double percentage = Math.Clamp((Value - Minimum) / range, 0.0, 1.0);
             double half = ThumbSize / 2;
+            bool active = _isHovered || _isScrubbing;
+            double thickness = active ? HoverThickness : RestThickness;
+            var radius = new CornerRadius(thickness / 2);
+
+            _trackBorder.CornerRadius = radius;
+            _fillBorder.CornerRadius = radius;
 
             if (Orientation == Orientation.Horizontal)
             {
                 double width = ActualWidth;
                 if (width <= 0) return;
+                _trackBorder.Height = thickness;
+                _fillBorder.Height = thickness;
                 _fillBorder.Width = percentage * width;
                 _thumbTransform.X = Math.Clamp((percentage * width) - half, -half, Math.Max(-half, width - half));
                 _thumbTransform.Y = 0;
@@ -271,28 +357,21 @@ namespace MusicPower3
             {
                 double height = ActualHeight;
                 if (height <= 0) return;
+                _trackBorder.Width = thickness;
+                _fillBorder.Width = thickness;
                 _fillBorder.Height = percentage * height;
                 double thumbY = height - (percentage * height) - half;
                 _thumbTransform.Y = Math.Clamp(thumbY, -half, Math.Max(-half, height - half));
                 _thumbTransform.X = 0;
             }
-        }
-
-        private void UpdateInteractionState()
-        {
-            _thumbContainer.Opacity = (IsThumbAlwaysVisible || _isHovered || _isScrubbing || _hasFocus) ? 1.0 : 0.0;
 
             double core = _isScrubbing ? ThumbCorePressed : (_isHovered ? ThumbCoreHover : ThumbCoreRest);
             _thumbCore.Width = core;
             _thumbCore.Height = core;
-
-            double t = CurrentThickness;
-            var radius = new CornerRadius(t / 2);
-            _trackBorder.CornerRadius = radius;
-            _fillBorder.CornerRadius = radius;
-            if (Orientation == Orientation.Horizontal) { _trackBorder.Height = t; _fillBorder.Height = t; }
-            else { _trackBorder.Width = t; _fillBorder.Width = t; }
+            _thumbContainer.Opacity = (IsThumbAlwaysVisible || _isHovered || _isScrubbing) ? 1.0 : 0.0;
         }
+
+        private void UpdateInteractionState() => UpdateVisuals();
 
         // Sets a new value and raises ValueChanged once. Returns false when nothing changed.
         private bool CommitValue(double rawValue)
@@ -314,23 +393,34 @@ namespace MusicPower3
 
         private void UpdateValueFromPointer(PointerRoutedEventArgs e)
         {
-            double range = Maximum - Minimum;
-            if (range <= 0) return;
-
             Point pos = e.GetCurrentPoint(this).Position;
-            double percentage;
-            if (Orientation == Orientation.Horizontal)
+            double val;
+            try
             {
-                if (ActualWidth <= 0) return;
-                percentage = Math.Clamp(pos.X / ActualWidth, 0.0, 1.0);
+                val = NativeProgressBar_CalculateValueFromPointer(
+                    pos.X,
+                    pos.Y,
+                    ActualWidth,
+                    ActualHeight,
+                    Orientation == Orientation.Horizontal ? 0 : 1,
+                    Minimum,
+                    Maximum,
+                    StepFrequency
+                );
             }
-            else
+            catch
             {
-                if (ActualHeight <= 0) return;
-                percentage = Math.Clamp(1.0 - (pos.Y / ActualHeight), 0.0, 1.0);
+                double range = Maximum - Minimum;
+                if (range <= 0) return;
+                double percentage = (Orientation == Orientation.Horizontal)
+                    ? (ActualWidth > 0 ? Math.Clamp(pos.X / ActualWidth, 0.0, 1.0) : 0.0)
+                    : (ActualHeight > 0 ? Math.Clamp(1.0 - (pos.Y / ActualHeight), 0.0, 1.0) : 0.0);
+                val = Minimum + (percentage * range);
+                if (StepFrequency > 0)
+                    val = Math.Round((val - Minimum) / StepFrequency) * StepFrequency + Minimum;
             }
 
-            CommitValue(Minimum + (percentage * range));
+            CommitValue(val);
         }
 
         internal void SetValueFromAutomation(double value) => CommitValue(value);
@@ -338,13 +428,13 @@ namespace MusicPower3
         private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
         {
             _isHovered = true;
-            UpdateInteractionState();
+            UpdateVisuals();
         }
 
         private void OnPointerExited(object sender, PointerRoutedEventArgs e)
         {
             _isHovered = false;
-            UpdateInteractionState();
+            UpdateVisuals();
         }
 
         private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
@@ -352,9 +442,8 @@ namespace MusicPower3
             if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 
             _isScrubbing = true;
-            Focus(FocusState.Pointer);
             this.CapturePointer(e.Pointer);
-            UpdateInteractionState();
+            UpdateVisuals();
             ScrubbingStarted?.Invoke(this, Value);
             UpdateValueFromPointer(e);
             e.Handled = true;
@@ -383,7 +472,6 @@ namespace MusicPower3
         {
             _isScrubbing = false;
             UpdateVisuals();
-            UpdateInteractionState();
             ScrubbingEnded?.Invoke(this, Value);
         }
 

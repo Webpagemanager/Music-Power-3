@@ -1038,16 +1038,16 @@ namespace MusicPower3
                 var t = tracks[0];
                 try
                 {
-                    using var file = TagLib.File.Create(new LocalFileAbstraction(t.FilePath), TagLib.ReadStyle.Average | TagLib.ReadStyle.PictureLazy);
-                    EditTitleBox.Text = file.Tag.Title ?? "";
-                    EditArtistBox.Text = string.Join("; ", file.Tag.Performers ?? Array.Empty<string>());
-                    EditAlbumBox.Text = file.Tag.Album ?? "";
-                    EditAlbumArtistBox.Text = string.Join("; ", file.Tag.AlbumArtists ?? Array.Empty<string>());
-                    if (file.Tag.Track > 0) EditTrackBox.Value = file.Tag.Track;
-                    if (file.Tag.Disc > 0) EditDiscBox.Value = file.Tag.Disc;
-                    if (file.Tag.Year > 0) EditYearBox.Value = file.Tag.Year;
-                    EditGenreBox.Text = string.Join("; ", file.Tag.Genres ?? Array.Empty<string>());
-                    EditCommentBox.Text = file.Tag.Comment ?? "";
+                    var meta = MusicPower3.Metadata.MetadataEngine.Read(t.FilePath);
+                    EditTitleBox.Text = meta.Title;
+                    EditArtistBox.Text = meta.Artist;
+                    EditAlbumBox.Text = meta.Album;
+                    EditAlbumArtistBox.Text = meta.AlbumArtist;
+                    if (meta.TrackNumber > 0) EditTrackBox.Value = meta.TrackNumber;
+                    if (meta.DiscNumber > 0) EditDiscBox.Value = meta.DiscNumber;
+                    if (meta.Year > 0) EditYearBox.Value = meta.Year;
+                    EditGenreBox.Text = meta.Genre;
+                    EditCommentBox.Text = meta.Comment;
                 }
                 catch { }
                 EditArtworkPreview.Source = t.HighResArtworkImage;
@@ -1117,16 +1117,25 @@ namespace MusicPower3
         private async void OnFetchMetadataClick(object sender, RoutedEventArgs e)
         {
             if (!Settings.EnableOnlineMetadata) return;
-            string url = MetadataUrlBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(url)) return;
+            string input = MetadataUrlBox.Text?.Trim() ?? string.Empty;
 
-            HideEditError();
-            if (!TryBuildOEmbedUrl(url, out var oEmbedUrl, out bool isYouTube))
+            // If input is empty, fallback to existing artist and title in the edit boxes
+            if (string.IsNullOrWhiteSpace(input))
             {
-                ShowEditError("Link not supported", "Use a secure (https) link from Spotify, YouTube or SoundCloud.");
+                string t = EditTitleBox.Text.Trim();
+                string a = EditArtistBox.Text.Trim();
+                if (!string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(t)) input = $"{a} - {t}";
+                else if (!string.IsNullOrEmpty(t)) input = t;
+                else if (!string.IsNullOrEmpty(a)) input = a;
+            }
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                ShowEditError("Enter a search query", "Paste a link or enter the artist and title to fetch metadata.");
                 return;
             }
 
+            HideEditError();
             FetchMetadataBtn.IsEnabled = false;
             FetchProgressRing.IsActive = true;
             FetchProgressRing.Visibility = Visibility.Visible;
@@ -1134,41 +1143,19 @@ namespace MusicPower3
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                byte[] jsonBytes = await DownloadLimitedAsync(oEmbedUrl, MaxJsonBytes, false, cts.Token);
-                var data = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(jsonBytes));
-                if (data == null) throw new InvalidDataException("The service returned no data.");
+                var meta = await MusicPower3.Metadata.OnlineMetadataService.FetchMetadataAsync(input, cts.Token);
+                if (meta == null) throw new InvalidDataException("No matching track metadata found online.");
 
-                string fetchedTitle = data["title"]?.ToString() ?? "";
-                string fetchedArtist = data["author_name"]?.ToString() ?? "";
-                string thumbnailUrl = data["thumbnail_url"]?.ToString() ?? "";
+                if (!string.IsNullOrWhiteSpace(meta.Title) && !_isBatchEditMode) EditTitleBox.Text = meta.Title;
+                if (!string.IsNullOrWhiteSpace(meta.Artist)) EditArtistBox.Text = meta.Artist;
+                if (!string.IsNullOrWhiteSpace(meta.Album)) EditAlbumBox.Text = meta.Album;
+                if (!string.IsNullOrWhiteSpace(meta.AlbumArtist)) EditAlbumArtistBox.Text = meta.AlbumArtist;
+                if (!string.IsNullOrWhiteSpace(meta.Genre)) EditGenreBox.Text = meta.Genre;
+                if (meta.Year > 0) { EditYearBox.Value = meta.Year; EditYearBox.Text = meta.Year.ToString(); }
+                if (meta.TrackNumber > 0 && !_isBatchEditMode) { EditTrackBox.Value = meta.TrackNumber; EditTrackBox.Text = meta.TrackNumber.ToString(); }
+                if (meta.DiscNumber > 0 && !_isBatchEditMode) { EditDiscBox.Value = meta.DiscNumber; EditDiscBox.Text = meta.DiscNumber.ToString(); }
 
-                if (isYouTube)
-                {
-                    fetchedArtist = fetchedArtist.Replace(" - Topic", "", StringComparison.OrdinalIgnoreCase).Trim();
-                    int dash = fetchedTitle.IndexOf(" - ", StringComparison.Ordinal);
-                    if (dash > 0)
-                    {
-                        fetchedArtist = fetchedTitle.Substring(0, dash).Trim();
-                        fetchedTitle = fetchedTitle.Substring(dash + 3).Trim();
-                    }
-                }
-
-                if (!string.IsNullOrWhiteSpace(fetchedTitle) && !_isBatchEditMode) EditTitleBox.Text = fetchedTitle;
-                if (!string.IsNullOrWhiteSpace(fetchedArtist)) EditArtistBox.Text = fetchedArtist;
-
-                if (Uri.TryCreate(thumbnailUrl, UriKind.Absolute, out var thumbUri) && IsAllowedImageHost(thumbUri))
-                {
-                    byte[] imageBytes = await DownloadLimitedAsync(thumbUri, MaxImageBytes, true, cts.Token);
-
-                    var bitmap = new BitmapImage { DecodePixelWidth = 320 };
-                    using var stream = new InMemoryRandomAccessStream();
-                    await stream.WriteAsync(imageBytes.AsBuffer());
-                    stream.Seek(0);
-                    await bitmap.SetSourceAsync(stream);   // throws if the bytes are not a valid image
-
-                    _newArtworkBytes = imageBytes;
-                    EditArtworkPreview.Source = bitmap;
-                }
+                // Existing artwork remains strictly untouched
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidDataException or System.Text.Json.JsonException)
             {
@@ -1262,6 +1249,12 @@ namespace MusicPower3
             if (!_isBatchEditMode || !string.IsNullOrWhiteSpace(EditCommentBox.Text)) update.Comment = EditCommentBox.Text;
 
             update.ArtworkData = _newArtworkBytes;
+            update.EncodingProfile = EditTagEncodingBox.SelectedIndex switch
+            {
+                1 => MusicPower3.Metadata.TagEncodingProfile.Id3v23Iso88591,
+                2 => MusicPower3.Metadata.TagEncodingProfile.Id3v24Utf8,
+                _ => MusicPower3.Metadata.TagEncodingProfile.Id3v23Utf16
+            };
 
             bool isBatch = _isBatchEditMode;
             bool successAll = true;
@@ -1277,9 +1270,11 @@ namespace MusicPower3
                         // Tag writing runs off the UI thread so a large batch never freezes the window.
                         await Task.Run(() => MetadataWriter.SaveMetadata(path, update, isBatch));
 
-                        if (update.Title != null) t.Title = update.Title;
-                        if (update.Performers != null) t.Artist = string.Join(", ", update.Performers);
-                        if (update.Album != null) t.Album = update.Album;
+                        var reloaded = MusicPower3.Metadata.MetadataEngine.Read(path);
+                        if (!string.IsNullOrWhiteSpace(reloaded.Title)) t.Title = reloaded.Title;
+                        if (!string.IsNullOrWhiteSpace(reloaded.Artist)) t.Artist = reloaded.Artist;
+                        if (!string.IsNullOrWhiteSpace(reloaded.Album)) t.Album = reloaded.Album;
+                        if (reloaded.Duration > TimeSpan.Zero) t.Duration = reloaded.Duration;
 
                         t.DateModified = File.GetLastWriteTime(path);
 
@@ -1291,9 +1286,7 @@ namespace MusicPower3
                     }
                     catch (Exception ex)
                     {
-                        string message = ex is IOException ? "Close the file in other programs and try again."
-                                       : ex is TagLib.CorruptFileException ? "The file's metadata is corrupted."
-                                       : ex.Message;
+                        string message = ex is IOException ? "Close the file in other programs and try again." : ex.Message;
                         ShowEditError("Could not save", message);
                         successAll = false;
                         break;

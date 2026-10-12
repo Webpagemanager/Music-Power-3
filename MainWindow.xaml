@@ -190,7 +190,7 @@
                                                         <ColumnDefinition Width="Auto"/>
                                                         <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBox x:Name="MetadataUrlBox" Grid.Column="0" PlaceholderText="Paste a Spotify, YouTube or SoundCloud link" VerticalAlignment="Center"/>
+                                                    <TextBox x:Name="MetadataUrlBox" Grid.Column="0" PlaceholderText="Paste a link (Spotify, YouTube, Apple Music, SoundCloud) or enter search term" VerticalAlignment="Center"/>
                                                     <Button x:Name="FetchMetadataBtn" Grid.Column="1" Content="Fetch" Click="OnFetchMetadataClick" VerticalAlignment="Center"/>
                                                     <ProgressRing x:Name="FetchProgressRing" Grid.Column="2" IsActive="False" Width="20" Height="20" Visibility="Collapsed" VerticalAlignment="Center"/>
                                                 </Grid>
@@ -232,6 +232,12 @@
 
                                             <TextBox x:Name="EditGenreBox" Header="Genre (separate with ;)" />
                                             <TextBox x:Name="EditCommentBox" Header="Comment" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80"/>
+
+                                            <ComboBox x:Name="EditTagEncodingBox" Header="Tag standard &amp; encoding" HorizontalAlignment="Stretch" SelectedIndex="0">
+                                                <ComboBoxItem Content="ID3v2.3 (UTF-16) — Recommended (Windows, Apple Music, Android)"/>
+                                                <ComboBoxItem Content="ID3v2.3 (ISO-8859-1) — Legacy compatibility (Older MP3 players, car stereos)"/>
+                                                <ComboBoxItem Content="ID3v2.4 (UTF-8) — Modern open standard"/>
+                                            </ComboBox>
 
                                             <InfoBar x:Name="EditErrorBar" Severity="Error" IsOpen="False" IsClosable="False" Title="Could not save" Message=""/>
                                         </StackPanel>

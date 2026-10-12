@@ -14,15 +14,6 @@ using System.Runtime.InteropServices.WindowsRuntime; // RESTORED: Required for .
 
 namespace MusicPower3.Models
 {
-    public class LocalFileAbstraction : TagLib.File.IFileAbstraction
-    {
-        public LocalFileAbstraction(string file) { Name = file; }
-        public string Name { get; }
-        public Stream ReadStream => new FileStream(Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        public Stream WriteStream => new FileStream(Name, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-        public void CloseStream(Stream stream) => stream.Dispose();
-    }
-
     public class AppSettings
     {
         public double GlobalScale { get; set; } = 1.0;
@@ -154,11 +145,7 @@ namespace MusicPower3.Models
             await _artworkGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                return await Task.Run(() =>
-                {
-                    using var file = TagLib.File.Create(new LocalFileAbstraction(filePath), TagLib.ReadStyle.PictureLazy);
-                    return file.Tag.Pictures.Length > 0 ? file.Tag.Pictures[0].Data.Data : null;
-                }).ConfigureAwait(false);
+                return await Task.Run(() => MusicPower3.Metadata.MetadataEngine.ReadArtworkBytes(filePath)).ConfigureAwait(false);
             }
             catch { return null; }
             finally { _artworkGate.Release(); }

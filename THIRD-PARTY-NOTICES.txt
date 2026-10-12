@@ -7,39 +7,11 @@ than shipped as separate .dll files alongside it). This file lists those
 components, their license terms, and how to obtain their source code, in
 compliance with the notice requirements of the licenses below.
 
---------------------------------------------------------------------------
-1. TagLib# (TagLibSharp)
---------------------------------------------------------------------------
-Used for:      Reading and writing audio metadata (ID3 tags) and embedded
-               album artwork.
-Package:       TagLibSharp, version 2.3.0 (NuGet)
-Copyright:     Copyright (c) 2006-2007 Brian Nickel and contributors
-License:       GNU Lesser General Public License v2.1 (LGPL-2.1-only)
-Homepage:      https://github.com/mono/taglib-sharp
-License text:  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
-
-TagLibSharp is included in this application, unmodified, as a bundled
-managed assembly. No changes have been made to its source code.
-
-Your rights under the LGPL-2.1 include the right to obtain the source
-code of this component and to modify or replace the version used by
-this application:
-
-  - Source code: https://github.com/mono/taglib-sharp
-  - NuGet package (unmodified, redistributable as a standalone .dll):
-    https://www.nuget.org/packages/TagLibSharp
-
-To relink this application against a different or modified build of
-TagLibSharp, replace the TagLibSharp package reference in the
-MusicPower3 project with your preferred version and rebuild, or extract
-the bundled assembly from the published single-file executable at
-runtime (the .NET single-file host writes bundled assemblies to a
-temporary extraction directory, or can be published without single-file
-bundling — see the project README for the `ExcludeFromSingleFile`
-option) and replace it there.
+Note: Audio metadata reading and writing is powered by Music Power 3's built-in,
+zero-dependency MetadataEngine (MIT License) with no third-party tagging libraries.
 
 --------------------------------------------------------------------------
-2. Windows Community Toolkit — LayoutTransformControl
+1. Windows Community Toolkit — LayoutTransformControl
 --------------------------------------------------------------------------
 Used for:      UI layout transformation support in WinUI 3 views.
 Package:       CommunityToolkit.WinUI.Controls.LayoutTransformControl
@@ -48,7 +20,7 @@ License:       MIT License
 Homepage:      https://github.com/CommunityToolkit/Windows
 
 --------------------------------------------------------------------------
-3. Windows App SDK
+2. Windows App SDK
 --------------------------------------------------------------------------
 Used for:      WinUI 3 application framework, windowing, and runtime.
 Package:       Microsoft.WindowsAppSDK, version 1.6.250108002
@@ -58,7 +30,7 @@ Homepage:      https://github.com/microsoft/WindowsAppSDK
 
 --------------------------------------------------------------------------
 
-The MIT-licensed components above (#2, #3) are included in accordance
+The MIT-licensed components above are included in accordance
 with the MIT License, which requires only that the copyright notice and
 license text be preserved in copies of the software — reproduced here.
 They impose no copyleft or source-availability obligations.

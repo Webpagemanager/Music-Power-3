@@ -173,6 +173,13 @@ namespace MusicPower3.Services
             File.WriteAllText(tmp, content);
             File.Move(tmp, path, true);
         }
+
+        public static void WriteAllBytes(string path, byte[] bytes)
+        {
+            string tmp = path + ".tmp";
+            File.WriteAllBytes(tmp, bytes);
+            File.Move(tmp, path, true);
+        }
     }
 
     public static class SettingsStore
@@ -323,12 +330,11 @@ namespace MusicPower3.Services
 
             try
             {
-                // PictureLazy: embedded artwork is not pulled into memory just to read the text tags.
-                using var file = TagLib.File.Create(new LocalFileAbstraction(filePath), TagLib.ReadStyle.Average | TagLib.ReadStyle.PictureLazy);
-                if (!string.IsNullOrWhiteSpace(file.Tag.Title)) title = file.Tag.Title;
-                if (file.Tag.Performers.Length > 0) artist = string.Join(", ", file.Tag.Performers);
-                if (!string.IsNullOrWhiteSpace(file.Tag.Album)) album = file.Tag.Album;
-                if (duration <= TimeSpan.Zero) duration = file.Properties.Duration;
+                var meta = MusicPower3.Metadata.MetadataEngine.Read(filePath);
+                if (!string.IsNullOrWhiteSpace(meta.Title)) title = meta.Title;
+                if (!string.IsNullOrWhiteSpace(meta.Artist)) artist = meta.Artist;
+                if (!string.IsNullOrWhiteSpace(meta.Album)) album = meta.Album;
+                if (duration <= TimeSpan.Zero) duration = meta.Duration;
             }
             catch { }
 
@@ -351,59 +357,15 @@ namespace MusicPower3.Services
         
         // Null = don't touch. Empty array (Length == 0) = delete artwork. 
         public byte[]? ArtworkData { get; set; }
+
+        public MusicPower3.Metadata.TagEncodingProfile EncodingProfile { get; set; } = MusicPower3.Metadata.TagEncodingProfile.Id3v23Utf16;
     }
 
     public static class MetadataWriter
     {
-        static MetadataWriter()
-        {
-            // Force ID3v2.3 instead of ID3v2.4. Windows Explorer and many car stereos 
-            // cannot read v2.4 tags properly. This guarantees maximum compatibility.
-            TagLib.Id3v2.Tag.DefaultVersion = 3;
-            TagLib.Id3v2.Tag.ForceDefaultVersion = true;
-        }
-
         public static void SaveMetadata(string filePath, TrackMetadataUpdate data, bool isBatch)
         {
-            // Tags are written in place (TagLib# only rewrites the tag region and uses padding), which keeps
-            // disk writes small and works while the file is open for playback. Copying the whole audio file
-            // for an "atomic" swap would rewrite tens of megabytes per edit and fail on an in-use file.
-            // If the file is strictly locked, TagLib# throws IOException; corrupted headers throw CorruptFileException.
-            using var file = TagLib.File.Create(new MusicPower3.Models.LocalFileAbstraction(filePath));
-
-            // Single track mode overwrites everything (even with empty strings).
-            // Batch mode ONLY overwrites fields that were explicitly provided (not null).
-            if (!isBatch || data.Title != null) file.Tag.Title = data.Title ?? string.Empty;
-            if (!isBatch || data.Performers != null) file.Tag.Performers = data.Performers ?? Array.Empty<string>();
-            if (!isBatch || data.Album != null) file.Tag.Album = data.Album ?? string.Empty;
-            if (!isBatch || data.AlbumArtists != null) file.Tag.AlbumArtists = data.AlbumArtists ?? Array.Empty<string>();
-            
-            if (!isBatch || data.Track.HasValue) file.Tag.Track = data.Track ?? 0;
-            if (!isBatch || data.Disc.HasValue) file.Tag.Disc = data.Disc ?? 0;
-            if (!isBatch || data.Year.HasValue) file.Tag.Year = data.Year ?? 0;
-            
-            if (!isBatch || data.Genres != null) file.Tag.Genres = data.Genres ?? Array.Empty<string>();
-            if (!isBatch || data.Comment != null) file.Tag.Comment = data.Comment ?? string.Empty;
-
-            // Artwork Handling
-            if (data.ArtworkData != null)
-            {
-                if (data.ArtworkData.Length == 0)
-                {
-                    // User explicitly cleared the artwork
-                    file.Tag.Pictures = Array.Empty<TagLib.IPicture>();
-                }
-                else
-                {
-                    // Completely replace existing pictures to prevent accumulating duplicates
-                    file.Tag.Pictures = new TagLib.IPicture[] 
-                    { 
-                        new TagLib.Picture(new TagLib.ByteVector(data.ArtworkData)) 
-                    };
-                }
-            }
-
-            file.Save();
+            MusicPower3.Metadata.MetadataEngine.Write(filePath, data, data.EncodingProfile);
         }
     }
 }

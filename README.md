@@ -19,8 +19,8 @@ A native Windows desktop music player built with **WinUI 3** (Windows App SDK), 
 - **Adaptive Accent Color & Themes** — Automatically synchronizes with your Windows system accent color in real time (`UISettings.ColorValuesChanged`), or allows customizing a bespoke theme color with instant palette regeneration.
 - **Vector AudioProgressBar** — High-performance vector progress bar with hover states, smooth scrubbing, full keyboard navigation (arrows, Page Up/Down, Home/End), and screen-reader accessibility (`IRangeValueProvider` automation peer).
 - **Local Library Scanning** — Streaming folder scanner with timestamp caching and bounded concurrency (`MaxDegreeOfParallelism = 2`) for fast startup and low CPU/SSD usage.
-- **Metadata Tag Editing** — View and edit title, artist, album, album artist, track/disc number, year, genre, and comments with single-track or batch editing, powered by [TagLib#](https://github.com/mono/taglib-sharp).
-- **Artwork Management** — Fetch online metadata with security-hardened HTTPS requests, host whitelisting, payload size limits, and an LRU artwork cache with capped decode dimensions (96px thumbnails, 600px high-resolution).
+- **Metadata Tag Editing** — View and edit title, artist, album, album artist, track/disc number, year, genre, and comments with single-track or batch editing, powered by the built-in, zero-dependency `MetadataEngine` with user-selectable encoding profiles (ID3v2.3 UTF-16, ID3v2.3 ISO-8859-1, ID3v2.4 UTF-8).
+- **Artwork Management** — Fetch online metadata across Apple Music, MusicBrainz, Spotify, YouTube, and SoundCloud, and manage embedded album artwork with capped decode dimensions (72px thumbnails, full uncompressed high-resolution playback).
 - **Hardened Installer & Uninstaller** — Self-contained setup wizard with zip-slip directory traversal guards, manifest-based file removal, and protected uninstall path validation.
 
 ---
@@ -31,7 +31,7 @@ A native Windows desktop music player built with **WinUI 3** (Windows App SDK), 
 |---|---|
 | UI Framework | WinUI 3 / Windows App SDK (1.6+) |
 | Runtime | .NET 10 (`net10.0-windows10.0.19041.0`) |
-| Tag reading/writing | [TagLibSharp](https://www.nuget.org/packages/TagLibSharp) (2.3.0) |
+| Tag reading/writing | Built-in zero-dependency `MetadataEngine` (ID3v2.2–v2.4, ID3v1, FLAC, MP4, WAV) |
 | Layout helpers | [CommunityToolkit.WinUI.Controls.LayoutTransformControl](https://www.nuget.org/packages/CommunityToolkit.WinUI.Controls.LayoutTransformControl) |
 | Media playback | `Windows.Media.Playback.MediaPlayer` + `SystemMediaTransportControls` |
 | Installer | .NET WinForms (`SetupWizard`), self-contained single-file publish |
@@ -123,4 +123,4 @@ Bug reports and feature requests can be filed on [GitHub Issues](https://github.
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
-> **Note on dependencies:** The build bundles [TagLibSharp](https://github.com/mono/taglib-sharp) (LGPL-2.1) along with MIT-licensed components from the Windows App SDK and Windows Community Toolkit. See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for license texts and instructions for obtaining or relinking against bundled components.
+> **Note on dependencies:** The build bundles MIT-licensed components from the Windows App SDK and Windows Community Toolkit. Audio metadata parsing and editing is powered by the built-in, zero-dependency `MetadataEngine` (MIT License). See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for license texts.
