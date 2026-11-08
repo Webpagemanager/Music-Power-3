@@ -1,9 +1,28 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
 # Build folders
 bin/
 obj/
 publish/
+**/bin/
+**/obj/
+**/publish/
 
-# Installer payloads
+# Installer payloads and binaries
 Payload.zip
 *.exe
 *.msix
+
+# IDE and OS
+.vs/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+
+# Added by cargo
+
+/target
